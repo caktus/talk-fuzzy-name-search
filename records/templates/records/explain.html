@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="description"
+              content="EXPLAIN ANALYZE query plan for a fuzzy name search query">
+        <meta name="keywords"
+              content="EXPLAIN, query plan, PostgreSQL, fuzzy search">
+        <title>EXPLAIN ANALYZE · Fuzzy Name Search</title>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: {
+                            50: '#eff6ff', 100: '#dbeafe', 200: '#bfdbfe',
+                            300: '#93c5fd', 400: '#60a5fa', 500: '#3b82f6',
+                            600: '#2563eb', 700: '#1d4ed8', 800: '#1e40af', 900: '#1e3a8a',
+                        },
+                    },
+                },
+            },
+        }
+        </script>
+    </head>
+    <body class="h-full bg-gray-50">
+        <div class="min-h-full">
+            <header class="bg-white shadow-sm border-b border-gray-200">
+                <div class="mx-auto max-w-7xl px-4 py-4 sm:px-6 lg:px-8">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h1 class="text-xl font-semibold text-gray-900">EXPLAIN ANALYZE</h1>
+                            <p class="text-sm text-gray-500 mt-1">Query plan for the launched search</p>
+                        </div>
+                        <span class="inline-flex items-center rounded-full bg-primary-50 px-2 py-1 text-xs font-medium text-primary-700 ring-1 ring-inset ring-primary-600/20">
+                            {{ mode_label }}
+                        </span>
+                    </div>
+                </div>
+            </header>
+            <main class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 space-y-6">
+                <div class="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+                    <div class="flex items-start justify-between gap-4">
+                        <div>
+                            <p class="text-sm text-gray-500">
+                                Searching for:
+                                <span class="font-medium text-gray-900">{{ first_name }}</span>
+                                <span class="font-medium text-gray-900">{{ last_name }}</span>
+                            </p>
+                            <p class="text-xs text-gray-500 mt-1">{{ mode_description }}</p>
+                        </div>
+                        <button type="button"
+                                onclick="window.close()"
+                                class="shrink-0 inline-flex items-center rounded-md bg-white px-3 py-2 text-sm font-semibold text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50">
+                            Close tab
+                        </button>
+                    </div>
+                </div>
+                {% if error %}
+                    <div class="rounded-lg border border-red-200 bg-red-50 p-4">
+                        <p class="text-sm text-red-700">
+                            <span class="font-semibold">Error:</span> {{ error }}
+                        </p>
+                    </div>
+                {% else %}
+                    {% if sql %}
+                        <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+                            <div class="px-6 py-3 border-b border-gray-200">
+                                <h2 class="text-sm font-semibold text-gray-900">SQL</h2>
+                            </div>
+                            <pre class="overflow-x-auto px-6 py-4 text-xs leading-relaxed text-gray-800 whitespace-pre-wrap break-words">{{ sql }}</pre>
+                        </div>
+                    {% endif %}
+                    <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+                        <div class="px-6 py-3 border-b border-gray-200">
+                            <h2 class="text-sm font-semibold text-gray-900">Query plan</h2>
+                            <p class="text-xs text-gray-500 mt-0.5">EXPLAIN (ANALYZE, BUFFERS)</p>
+                        </div>
+                        <pre class="overflow-x-auto px-6 py-4 text-xs leading-relaxed text-gray-800 bg-gray-50 rounded-b-lg">{{ plan }}</pre>
+                    </div>
+                {% endif %}
+            </main>
+        </div>
+    </body>
+</html>
