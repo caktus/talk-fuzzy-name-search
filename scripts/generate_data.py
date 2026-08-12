@@ -448,15 +448,6 @@ def generate_records(count: int, output_csv: str, report_every: int = 5_000_000)
     print(f"Generating {count:,} records -> {output_csv}", flush=True)
     start_time = time.time()
 
-    # Pre-compute phonetic cache
-    phonetic_cache = {}
-    all_names = COMMON_FIRST_NAMES_MALE + COMMON_FIRST_NAMES_FEMALE + COMMON_LAST_NAMES + EXTRA_LAST_NAMES
-    for name in all_names:
-        phonetic_cache[name.upper()] = phonetic_tokens(name)
-    for canonical, nicks in NICKNAME_MAP.items():
-        for nick in nicks:
-            phonetic_cache[nick.upper()] = phonetic_tokens(nick)
-
     canonical_list = list(NICKNAME_MAP.keys())
     all_last = COMMON_LAST_NAMES + EXTRA_LAST_NAMES
 
@@ -469,8 +460,6 @@ def generate_records(count: int, output_csv: str, report_every: int = 5_000_000)
                 "middle_name",
                 "date_of_birth",
                 "nicknames",
-                "first_name_phonetic",
-                "last_name_phonetic",
             ]
         )
 
@@ -508,8 +497,6 @@ def generate_records(count: int, output_csv: str, report_every: int = 5_000_000)
                 else:
                     last_name = inject_typo(last_name)
 
-            first_phonetic = phonetic_cache.get(first_name.upper(), phonetic_tokens(first_name))
-            last_phonetic = phonetic_cache.get(last_name.upper(), phonetic_tokens(last_name))
             nicknames_str = "|".join(nicknames) if nicknames else ""
 
             # CSV format: pipe-separated arrays
@@ -520,8 +507,6 @@ def generate_records(count: int, output_csv: str, report_every: int = 5_000_000)
                     middle_name,
                     dob,
                     nicknames_str,
-                    "|".join(first_phonetic),
-                    "|".join(last_phonetic),
                 ]
             )
 
@@ -559,13 +544,10 @@ def load_csv_to_db(csv_path: str, batch_size: int = 50000):
         reader = csv.DictReader(f)
         batch = []
         for row in reader:
-            # Parse pipe-separated arrays back to lists
-            nicknames = row["nicknames"].split("|") if row["nicknames"] else []
-            first_phonetic = row["first_name_phonetic"].split("|") if row["first_name_phonetic"] else []
-            last_phonetic = row["last_name_phonetic"].split("|") if row["last_name_phonetic"] else []
+            nicknames = row.get("nicknames", "").split("|") if row.get("nicknames") else []
 
-            dob = row["date_of_birth"] if row["date_of_birth"] else None
-            middle = row["middle_name"] if row["middle_name"] else None
+            dob = row.get("date_of_birth") or None
+            middle = row.get("middle_name") or None
 
             batch.append(
                 Person(
@@ -574,8 +556,6 @@ def load_csv_to_db(csv_path: str, batch_size: int = 50000):
                     middle_name=middle,
                     date_of_birth=dob,
                     nicknames=nicknames,
-                    first_name_phonetic=first_phonetic,
-                    last_name_phonetic=last_phonetic,
                 )
             )
 

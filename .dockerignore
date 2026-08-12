@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Django
+dsd_logs/
+*.log
+
+# Data (large files)
+data/
+*.csv
+*.sqlite3
+
+# Docker
+docker-compose*.yml
+.dockerignore
+
+# Kind
+kind-cluster.yaml
+.kubeconfig-kind
+
+# Documentation
+*.md
+docs/
+
+# Marimo notebook
+__marimo__/
+demo.py
+
+# Helm (generated)
+helm-charts/
+
+# Deployment plugin
+dsd-kind/
+
+# OS
+.DS_Store
+Thumbs.db

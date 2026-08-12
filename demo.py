@@ -223,13 +223,9 @@ def _(mo):
 
 @app.cell
 def _():
-    from records.phonetics import (
-        dm_soundex_tokens,
-        resolve_variants,
-        soundex_tokens,
-    )
+    from records.phonetics import resolve_variants
 
-    return dm_soundex_tokens, resolve_variants, soundex_tokens
+    return (resolve_variants,)
 
 
 @app.cell
@@ -244,31 +240,27 @@ def _(mo):
 
 
 @app.cell
-def _(dm_soundex_tokens, mo, name_input, resolve_variants, soundex_tokens):
+def _(mo, name_input, resolve_variants):
     name = name_input.value.strip()
 
-    mo.stop(not name, mo.md("Enter a name above to see its phonetic analysis."))
+    mo.stop(not name, mo.md("Enter a name above to see its variant analysis."))
 
     variants = resolve_variants(name)
-    soundex = soundex_tokens(name)
-    dm_tokens = dm_soundex_tokens(name)
 
     mo.md(f"""
-    ### Phonetic Analysis: "{name}"
+    ### Name Variant Analysis: "{name}"
 
     | Property | Value |
     |---|---|
     | **Variants** | {", ".join(variants)} |
-    | **Soundex tokens** | {", ".join(soundex)} |
-    | **DM tokens** | {", ".join(dm_tokens)} |
+
+    When you search for **"{name}"**, the system expands it to all known
+    variants above. PostgreSQL's `SOUNDEX()` and `DAITCH_MOKOTOFF()` functions
+    are then applied directly in the query (no Python computation needed).
 
     **Soundex** maps names to 4-character codes based on consonant sounds.
-    "William" → W450, "Bill" → B400. Different codes, but both are stored
-    in the phonetic array for broad matching.
-
     **Daitch-Mokotoff** generates multiple codes per name, accounting for
-    different language transliterations. It's more comprehensive than Soundex
-    but also more complex.
+    different language transliterations.
     """)
     return
 
@@ -379,14 +371,18 @@ def _(mo):
 
     The dual-layer approach works because:
 
-    1. **Phonetic tokens** (Soundex + Daitch-Mokotoff) stored as PostgreSQL arrays
-       enable instant broad filtering via GIN indexes and the `&&` overlap operator
+    1. **PostgreSQL fuzzystrmatch** (`SOUNDEX()`, `DAITCH_MOKOTOFF()`) applied
+       directly in queries via functional GIN/B-tree indexes enables instant
+       broad filtering without storing pre-computed tokens
 
     2. **Levenshtein early-exit** (`levenshtein_less_equal`) provides precision
        filtering without computing full edit distances for non-matching names
 
     3. **B-tree prefix indexes** (`text_pattern_ops`) support fast type-ahead
        for exact/prefix matching
+
+    4. **pg_trgm GiST indexes** enable KNN nearest-neighbor search ordered by
+       trigram similarity distance (`<->` operator)
 
     This combination keeps searches fast and forgiving at **50+ million records**.
 

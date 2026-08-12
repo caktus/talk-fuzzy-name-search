@@ -1,14 +1,11 @@
 """Characterization tests for records.phonetics module.
 
-Captures existing behavior of phonetic token generation and nickname resolution.
+Captures existing behavior of nickname resolution.
+Phonetic token generation (Soundex, Daitch-Mokotoff) is now handled
+by PostgreSQL's fuzzystrmatch extension directly in queries.
 """
 
-from records.phonetics import (
-    NICKNAME_MAP,
-    dm_soundex_tokens,
-    resolve_variants,
-    soundex_tokens,
-)
+from records.phonetics import NICKNAME_MAP, resolve_variants
 
 
 class TestNicknameMap:
@@ -58,69 +55,3 @@ class TestResolveVariants:
     def test_case_insensitive(self):
         """Name resolution is case-insensitive."""
         assert resolve_variants("william") == resolve_variants("WILLIAM")
-
-
-class TestSoundexTokens:
-    """Characterize soundex_tokens() behavior."""
-
-    def test_returns_non_empty_list(self):
-        """soundex_tokens returns a non-empty list for valid names."""
-        tokens = soundex_tokens("John")
-        assert isinstance(tokens, list)
-        assert len(tokens) > 0
-
-    def test_smith_soundex(self):
-        """Smith generates Soundex token S530."""
-        tokens = soundex_tokens("Smith")
-        assert "S530" in tokens
-
-    def test_john_soundex(self):
-        """John generates Soundex token J500."""
-        tokens = soundex_tokens("John")
-        assert "J500" in tokens
-
-    def test_william_includes_bill_tokens(self):
-        """William's tokens include Bill's Soundex code."""
-        tokens = soundex_tokens("William")
-        # Bill's Soundex is B400
-        assert "B400" in tokens
-
-    def test_returns_sorted_unique_tokens(self):
-        """Tokens are sorted and unique."""
-        tokens = soundex_tokens("Robert")
-        assert tokens == sorted(set(tokens))
-
-    def test_empty_name_returns_empty(self):
-        """Empty name returns empty list."""
-        tokens = soundex_tokens("")
-        assert tokens == []
-
-
-class TestDmSoundexTokens:
-    """Characterize dm_soundex_tokens() behavior."""
-
-    def test_returns_non_empty_list(self):
-        """dm_soundex_tokens returns a non-empty list for valid names."""
-        tokens = dm_soundex_tokens("John")
-        assert isinstance(tokens, list)
-        assert len(tokens) > 0
-
-    def test_tokens_start_with_dm_prefix(self):
-        """DM tokens have DM prefix."""
-        tokens = dm_soundex_tokens("Smith")
-        assert all(t.startswith("DM") for t in tokens)
-
-    def test_returns_sorted_unique_tokens(self):
-        """Tokens are sorted and unique."""
-        tokens = dm_soundex_tokens("Robert")
-        assert tokens == sorted(set(tokens))
-
-    def test_william_includes_variants(self):
-        """William's DM tokens include variant codes."""
-        tokens = dm_soundex_tokens("William")
-        assert len(tokens) >= 1
-
-    def test_empty_name_returns_default(self):
-        """Empty name returns default token."""
-        tokens = dm_soundex_tokens("")
-        assert tokens == ["DM0000"]

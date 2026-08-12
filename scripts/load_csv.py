@@ -34,11 +34,9 @@ def load_csv(csv_path: str, batch_size: int = 50000):
         batch = []
 
         for row in reader:
-            nicknames = row["nicknames"].split("|") if row["nicknames"] else []
-            first_phonetic = row["first_name_phonetic"].split("|") if row["first_name_phonetic"] else []
-            last_phonetic = row["last_name_phonetic"].split("|") if row["last_name_phonetic"] else []
-            dob = row["date_of_birth"] if row["date_of_birth"] else None
-            middle = row["middle_name"] if row["middle_name"] else None
+            nicknames = row.get("nicknames", "").split("|") if row.get("nicknames") else []
+            dob = row.get("date_of_birth") or None
+            middle = row.get("middle_name") or None
 
             batch.append(
                 Person(
@@ -47,8 +45,6 @@ def load_csv(csv_path: str, batch_size: int = 50000):
                     middle_name=middle,
                     date_of_birth=dob,
                     nicknames=nicknames,
-                    first_name_phonetic=first_phonetic,
-                    last_name_phonetic=last_phonetic,
                 )
             )
 

@@ -54,6 +54,8 @@ INSTALLED_APPS = [
     "records",
     # Debug toolbar
     "debug_toolbar",
+    # Deployment
+    "django_simple_deploy",
 ]
 
 MIDDLEWARE = [
@@ -146,3 +148,67 @@ DEBUG_TOOLBAR_CONFIG = {
     "SHOW_TEMPLATE_CONTEXT": True,
     "ENABLE_STACKTRACES": True,
 }
+
+
+# =============================================================================
+# Kind (Kubernetes) settings
+# =============================================================================
+# Applied when ON_KIND environment variable is set (set by the Dockerfile).
+# This block configures the app for running inside a kind cluster with CNPG.
+# =============================================================================
+
+import os
+
+if os.environ.get("ON_KIND_SETUP") or os.environ.get("ON_KIND"):
+    # Static files (needed during Docker build and at runtime)
+    STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
+    STATIC_URL = "/static/"
+    try:
+        STATICFILES_DIRS.append(os.path.join(BASE_DIR, "static"))
+    except NameError:
+        STATICFILES_DIRS = [os.path.join(BASE_DIR, "static")]
+
+    # WhiteNoise for static files (lightweight, no Redis needed)
+    i = MIDDLEWARE.index("django.middleware.security.SecurityMiddleware")
+    MIDDLEWARE.insert(i + 1, "whitenoise.middleware.WhiteNoiseMiddleware")
+    WHITENOISE_USE_FINDERS = True
+
+    # Remove debug toolbar in production
+    if "debug_toolbar" in INSTALLED_APPS:
+        INSTALLED_APPS.remove("debug_toolbar")
+    if "debug_toolbar.middleware.DebugToolbarMiddleware" in MIDDLEWARE:
+        MIDDLEWARE.remove("debug_toolbar.middleware.DebugToolbarMiddleware")
+    # Remove deployment plugin (not needed in the container)
+    if "django_simple_deploy" in INSTALLED_APPS:
+        INSTALLED_APPS.remove("django_simple_deploy")
+
+if os.environ.get("ON_KIND"):
+    # Security settings
+    SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", SECRET_KEY)
+
+    if os.environ.get("DEBUG") == "FALSE":
+        DEBUG = False
+    elif os.environ.get("DEBUG") == "TRUE":
+        DEBUG = True
+
+    # Allowed hosts
+    hostname = os.environ.get("DJANGO_ALLOWED_HOSTS", "*")
+    ALLOWED_HOSTS = [h.strip() for h in hostname.split(",")]
+
+    # Database: use DATABASE_URL from CNPG (psycopg3 format)
+    db_url = os.environ.get("DATABASE_URL")
+    if db_url:
+        DATABASES["default"] = {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": os.environ.get("DB_NAME", "fuzzy_demo"),
+            "USER": os.environ.get("DB_USER", "fuzzy_demo"),
+            "PASSWORD": os.environ.get("DB_PASSWORD", ""),
+            "HOST": os.environ.get("DB_HOST", "localhost"),
+            "PORT": os.environ.get("DB_PORT", "5432"),
+        }
+
+    # CSRF trusted origins (for HTTPS ingress)
+    CSRF_TRUSTED_ORIGINS = [
+        f"http://{os.environ.get('APP_HOSTNAME', 'localhost')}",
+        f"https://{os.environ.get('APP_HOSTNAME', 'localhost')}",
+    ]

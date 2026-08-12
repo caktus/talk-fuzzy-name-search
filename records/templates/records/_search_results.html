@@ -3,39 +3,88 @@
         <div class="px-6 py-4 border-b border-gray-200">
             <div class="flex items-start justify-between gap-4">
                 <div>
-                    <h2 class="text-sm font-semibold text-gray-900">{{ phase_label }}</h2>
-                    {% if method_description %}<p class="text-xs text-gray-500 mt-0.5">{{ method_description }}</p>{% endif %}
+                    <h2 class="text-sm font-semibold text-gray-900">Search Results</h2>
                     <p class="text-sm text-gray-500 mt-2">
-                        Searching for: <span class="font-medium">{{ first_name }}</span> <span class="font-medium">{{ last_name }}</span>
+                        Searching for: <span class="font-medium">{{ first_name }}</span> <span class="font-medium">{{ last_name }}</span>{% if date_of_birth %} <span class="font-medium">({{ date_of_birth }})</span>{% endif %}
                     </p>
                 </div>
                 <div class="flex items-center gap-3 shrink-0">
                     <span class="inline-flex items-center rounded-full bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-600/20">{{ count }} results</span>
                     <span class="inline-flex items-center rounded-full {% if elapsed_ms < 100 %}bg-green-50 text-green-700 ring-green-600/20{% else %}bg-yellow-50 text-yellow-700 ring-yellow-600/20{% endif %} px-2 py-1 text-xs font-medium ring-1 ring-inset">{{ elapsed_ms|floatformat:1 }}ms</span>
-                    <a href="{% url 'records:search_explain' %}?mode={{ mode }}&first_name={{ first_name|urlencode }}&last_name={{ last_name|urlencode }}"
-                       target="_blank"
-                       class="inline-flex items-center rounded-md bg-white px-2 py-1 text-xs font-semibold text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50">EXPLAIN</a>
+                    <a href="{% url 'records:search_explain' %}?{% for key, val in request.GET.items %}{% if key != 'modes' %}{{ key }}={{ val }}&{% endif %}{% endfor %}mode={{ enabled_modes.0 }}" target="_blank" rel="noopener" class="shrink-0 inline-flex items-center gap-1 rounded-md bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 shadow-sm ring-1 ring-inset ring-gray-300 hover:bg-gray-50">
+                        <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                        Explain
+                    </a>
                 </div>
             </div>
+            <details class="mt-3">
+                <summary class="text-xs font-medium text-gray-500 cursor-pointer hover:text-gray-700">SQL queries ({{ queries|length }})</summary>
+                <div class="mt-2 space-y-2">
+                    {% for q in queries %}
+                        <div class="bg-gray-900 rounded-md p-3 overflow-x-auto">
+                            <div class="flex items-center justify-between mb-1">
+                                <span class="text-xs text-gray-400">Query {{ forloop.counter }}</span>
+                                <span class="text-xs text-gray-400">{{ q.time }}ms</span>
+                            </div>
+                            <pre class="text-xs text-green-300 font-mono whitespace-pre-wrap break-words">{{ q.sql }}</pre>
+                        </div>
+                    {% endfor %}
+                </div>
+            </details>
         </div>
         {% if results %}
             <div class="overflow-x-auto">
                 <table class="min-w-full text-xs text-left text-gray-500">
                     <thead class="text-xs text-gray-700 uppercase bg-gray-100">
                         <tr>
+                            <th class="px-4 py-3 whitespace-nowrap">ID</th>
                             <th class="px-4 py-3 whitespace-nowrap">First Name</th>
                             <th class="px-4 py-3 whitespace-nowrap">Last Name</th>
                             <th class="px-4 py-3 whitespace-nowrap">Middle</th>
                             <th class="px-4 py-3 whitespace-nowrap">Date of Birth</th>
+                            <th class="px-4 py-3 whitespace-nowrap">Match</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {% for person in results %}
+                        {% for result in results %}
                             <tr class="bg-white border-b hover:bg-gray-50">
-                                <td class="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">{{ person.first_name }}</td>
-                                <td class="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">{{ person.last_name }}</td>
-                                <td class="px-4 py-3 whitespace-nowrap">{{ person.middle_name|default:"--" }}</td>
-                                <td class="px-4 py-3 whitespace-nowrap">{{ person.date_of_birth|default:"--" }}</td>
+                                <td class="px-4 py-3 text-gray-400 whitespace-nowrap">{{ result.person.id }}</td>
+                                <td class="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">{{ result.person.first_name }}</td>
+                                <td class="px-4 py-3 font-medium text-gray-900 whitespace-nowrap">{{ result.person.last_name }}</td>
+                                <td class="px-4 py-3 whitespace-nowrap">{{ result.person.middle_name|default:"--" }}</td>
+                                <td class="px-4 py-3 whitespace-nowrap">
+                                    {% if result.person.date_of_birth %}
+                                        <button type="button"
+                                                class="dob-link text-primary-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-600"
+                                                data-dob="{{ result.person.date_of_birth|date:'Y-m-d' }}"
+                                                title="Search this date of birth">{{ result.person.date_of_birth }}</button>
+                                    {% else %}
+                                        --
+                                    {% endif %}
+                                </td>
+                                <td class="px-4 py-3 whitespace-nowrap">
+                                    <div class="flex flex-wrap gap-1">
+                                        {% if result.has_prefix %}
+                                            <span class="inline-flex items-center rounded-full bg-green-50 px-1.5 py-0.5 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">Exact Prefix</span>
+                                        {% endif %}
+                                        {% if result.has_legacy %}
+                                            <span class="inline-flex items-center rounded-full bg-gray-50 px-1.5 py-0.5 text-xs font-medium text-gray-700 ring-1 ring-inset ring-gray-600/20">LIKE</span>
+                                        {% endif %}
+                                        {% if result.has_soundex %}
+                                            <span class="inline-flex items-center rounded-full bg-blue-50 px-1.5 py-0.5 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-600/20" title="Soundex: {{ result.person.first_name }}={{ result.phonetic_codes.soundex_fn }}, {{ result.person.last_name }}={{ result.phonetic_codes.soundex_ln }}">
+                                                Soundex
+                                            </span>
+                                        {% endif %}
+                                        {% if result.has_dm %}
+                                            <span class="inline-flex items-center rounded-full bg-purple-50 px-1.5 py-0.5 text-xs font-medium text-purple-700 ring-1 ring-inset ring-purple-600/20" title="DM: {{ result.person.first_name }}={{ result.phonetic_codes.dm_fn }}, {{ result.person.last_name }}={{ result.phonetic_codes.dm_ln }}">
+                                                DM
+                                            </span>
+                                        {% endif %}
+                                        {% if result.has_trigram %}
+                                            <span class="inline-flex items-center rounded-full bg-indigo-50 px-1.5 py-0.5 text-xs font-medium text-indigo-700 ring-1 ring-inset ring-indigo-600/20">Trigram</span>
+                                        {% endif %}
+                                    </div>
+                                </td>
                             </tr>
                         {% endfor %}
                     </tbody>
@@ -44,11 +93,7 @@
         {% else %}
             <div class="px-6 py-12 text-center">
                 <p class="text-sm text-gray-500">No results found for "{{ first_name }} {{ last_name }}"</p>
-                {% if fuzzy %}
-                    <p class="text-xs text-gray-400 mt-1">Try unchecking "Fuzzy matching" for exact prefix search</p>
-                {% else %}
-                    <p class="text-xs text-gray-400 mt-1">Try checking "Fuzzy matching" for typo-tolerant search</p>
-                {% endif %}
+                <p class="text-xs text-gray-400 mt-1">Try enabling more search modes above</p>
             </div>
         {% endif %}
     </div>

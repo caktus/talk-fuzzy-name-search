@@ -15,7 +15,7 @@ class TestPersonModel:
     """Characterize Person model creation and behavior."""
 
     def test_create_person_minimal(self):
-        """Person can be created with just first_name and last_name."""
+        """Person can be created with just first_name, last_name, and date_of_birth."""
         person = PersonFactory.create(
             first_name="John",
             last_name="Smith",
@@ -24,6 +24,7 @@ class TestPersonModel:
         assert person.last_name == "Smith"
         assert person.middle_name is None
         assert person.nicknames == []
+        assert person.date_of_birth is not None
 
     def test_create_person_with_middle_name(self):
         """Person supports middle_name field."""
@@ -31,6 +32,7 @@ class TestPersonModel:
             first_name="John",
             last_name="Smith",
             middle_name="Michael",
+            date_of_birth="1990-01-15",
         )
         assert person.middle_name == "Michael"
 
@@ -39,6 +41,7 @@ class TestPersonModel:
         person = Person.objects.create(
             first_name="Bill",
             last_name="Smith",
+            date_of_birth="1985-06-20",
             nicknames=["William", "Billy"],
         )
         assert "William" in person.nicknames
@@ -49,20 +52,10 @@ class TestPersonModel:
         person = Person.objects.create(
             first_name="John",
             last_name="Smith",
+            date_of_birth="1990-01-15",
         )
         assert "John" in str(person)
         assert "Smith" in str(person)
-
-    def test_person_phonetic_tokens_non_empty(self):
-        """Phonetic tokens are populated for a created person."""
-        person = Person.objects.create(
-            first_name="John",
-            last_name="Smith",
-            first_name_phonetic=["J500"],
-            last_name_phonetic=["S530"],
-        )
-        assert len(person.first_name_phonetic) > 0
-        assert len(person.last_name_phonetic) > 0
 
 
 class TestPersonQuerySet:
@@ -93,8 +86,7 @@ class TestPersonQuerySet:
         Person.objects.create(
             first_name="John",
             last_name="Smith",
-            first_name_phonetic=["J500"],
-            last_name_phonetic=["S530"],
+            date_of_birth="1990-01-15",
         )
         results = Person.objects.search_legacy("John", "Smith")
         assert results.count() >= 1
@@ -104,8 +96,57 @@ class TestPersonQuerySet:
         Person.objects.create(
             first_name="John",
             last_name="Smith",
-            first_name_phonetic=["J500"],
-            last_name_phonetic=["S530"],
+            date_of_birth="1990-01-15",
         )
         results = Person.objects.search_legacy("john", "smith")
         assert results.count() >= 1
+
+
+class TestDateOfBirthFilter:
+    """Characterize the required date_of_birth field and filtering across all search modes."""
+
+    @pytest.fixture(autouse=True)
+    def _seed_data(self):
+        self.matching_dob = "1990-05-15"
+        self.other_dob = "1985-01-01"
+        Person.objects.create(
+            first_name="John",
+            last_name="Smith",
+            date_of_birth=self.matching_dob,
+        )
+        Person.objects.create(
+            first_name="John",
+            last_name="Smith",
+            date_of_birth=self.other_dob,
+        )
+
+    def test_search_legacy_filters_by_date_of_birth(self):
+        results = Person.objects.search_legacy("John", "Smith", self.matching_dob)
+        assert results.count() == 1
+        assert str(results.first().date_of_birth) == self.matching_dob
+
+    def test_search_exact_filters_by_date_of_birth(self):
+        results = Person.objects.search_exact("John", "Smith", self.matching_dob)
+        assert results.count() == 1
+
+    def test_search_phonetic_filters_by_date_of_birth(self):
+        results = Person.objects.search_phonetic("John", "Smith", self.matching_dob)
+        assert results.count() == 1
+
+    def test_search_dm_filters_by_date_of_birth(self):
+        results = Person.objects.search_dm("John", "Smith", self.matching_dob)
+        assert results.count() == 1
+
+    def test_search_trigram_filters_by_date_of_birth(self):
+        results = Person.objects.search_trigram("John", "Smith", self.matching_dob)
+        assert results.count() == 1
+
+    def test_search_trigram_date_of_birth_only(self):
+        """date_of_birth alone (no names) is enough to trigger a trigram search."""
+        results = Person.objects.search_trigram("", "", self.matching_dob)
+        assert results.count() == 1
+
+    def test_search_legacy_no_criteria_returns_empty(self):
+        """With no name and no date_of_birth, search_legacy returns nothing."""
+        results = Person.objects.search_legacy("", "")
+        assert results.count() == 0

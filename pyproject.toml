@@ -9,7 +9,10 @@ dependencies = [
     "django-environ>=0.11",
     "faker>=30",
     "marimo>=0.10",
+    "numpy>=2.0",
     "pandas>=3.0.5",
+    "polars>=1.0",
+    "django-simple-deploy>=1.4.1",
 ]
 
 [dependency-groups]
@@ -40,3 +43,9 @@ select = ["E", "F", "I", "N", "W", "UP"]
 # marimo cell functions receive cross-cell variables as arguments, so their
 # names must match the defining variables (e.g. Person, MillisecondTimer).
 "demo.py" = ["N803"]
+# Migrations contain auto-generated SQL strings that exceed line length.
+"records/migrations/*" = ["E501"]
+# Seed command uses UPPER_CASE for batch config constants and has long SQL strings.
+"records/management/commands/seed_data.py" = ["N806"]
+# Models has long SQL strings for match_source annotations.
+"records/models.py" = ["E501"]

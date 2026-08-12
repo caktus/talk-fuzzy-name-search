@@ -220,3 +220,15 @@ __marimo__/
 # Agent files
 .pi-subagents/
 .playwright-cli/
+
+# Temporary
+dsd-kind/
+helm-charts/
+
+# Session/docs not for VCS
+.pi/
+data/
+dsd_session.txt
+requirements.txt
+seed_data_prompt.md
+talk_proposal.md

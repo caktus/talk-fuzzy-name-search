@@ -1,0 +1,202 @@
+======================================================================
+TEST CASES — Fuzzy Name Search Demo (54M records, seed=42)
+======================================================================
+
+--- Large person clusters (same person_id, 20+ records) ---
+
+  [1] person_id=003b1583-f096-4e26-9bce-63262978dca2 (80 records, DOB: 1967-08-01)
+       JAIME DAVENPORT (×63)
+       JAME DAVENPORT (×3)
+       JAIME DAVENPOT (×2)
+       AJIME DAVENPORT (×2)
+       JAIME DAVEPORT (×2)
+       JAIME DAVENOPRT (×1)
+       JAIME DAVEPNORT (×1)
+       JAIME DAVNEPORT (×1)
+       JAIME TAVENPORT (×1)
+       JAGME DAVENPORT (×1)
+
+  [2] person_id=002e689d-447d-4a72-9ec6-ceeaaeb2390d (80 records, DOB: 1998-12-18)
+       MATT FLOYD (×72)
+       MATT FFOYD (×1)
+       MATT FLLYD (×1)
+       MATT FLOD (×1)
+       MATT FLODY (×1)
+       MATT LFOYD (×1)
+       MATT LOYD (×1)
+       AMTT FLOYD (×1)
+       MTAT FLOYD (×1)
+
+  [3] person_id=00339e9d-e1e5-4443-beae-fd09676d7b0b (80 records, DOB: 1988-05-09)
+       SUE CRUZ (×63)
+       USE CRUZ (×5)
+       SUE CRZ (×2)
+       SFE CRUZ (×1)
+       SIE CRUZ (×1)
+       SUE CRGZ (×1)
+       SE CRUZ (×1)
+       SUE CRZU (×1)
+       SUE CURZ (×1)
+       SUE KRUZ (×1)
+
+  [4] person_id=002a0c09-8887-4d6a-b89c-df51a64955dc (80 records, DOB: 2000-05-26)
+       DOUG HARDIN (×59)
+       DOUG HARIDN (×2)
+       DUOG HARDIN (×2)
+       DONG HARDIN (×1)
+       DOPG HARDIN (×1)
+       DOU HARDIN (×1)
+       DOUG AHRDIN (×1)
+       DOUG HARDI (×1)
+       DOUG HARDIQ (×1)
+       DOUG HARIN (×1)
+
+  [5] person_id=00200852-b5e2-4644-b99a-d5d198973e93 (80 records, DOB: 1981-12-22)
+       ALLISON PAYNE (×64)
+       ALLISON PYANE (×2)
+       ALLISON PAYEN (×2)
+       ALLISN PAYNE (×1)
+       ALLISNO PAYNE (×1)
+       ALLISON PAYBE (×1)
+       ALLISON PAYCE (×1)
+       ALLISON PAYE (×1)
+       ALLISON PAYN (×1)
+       ALLISON PAYNX (×1)
+
+  [6] person_id=001bd650-8fd6-4a31-8ba2-470396d33b95 (80 records, DOB: 2002-09-10)
+       LOUIS BURCH (×66)
+       LUOIS BURCH (×2)
+       LOUSI BURCH (×2)
+       LOUIS BUCH (×1)
+       LOUIS BUCRH (×1)
+       LOUIS BURCR (×1)
+       LOUIS MURCH (×1)
+       LOUIS OURCH (×1)
+       LUIS BURCH (×1)
+       LOHIS BURCH (×1)
+
+  [7] person_id=001ef3fa-b938-43d5-a7dc-813da87ef653 (80 records, DOB: 1944-10-29)
+       JAY FORD (×62)
+       JA FORD (×5)
+       AJY FORD (×2)
+       JYA FORD (×2)
+       AAY FORD (×1)
+       JAY FODR (×1)
+       JAY FOFD (×1)
+       JAY FOYD (×1)
+       JRY FORD (×1)
+       JAY FLRD (×1)
+
+  [8] person_id=00118ee3-3960-4943-a8cd-f46f63ae57e0 (80 records, DOB: 1948-02-25)
+       LORRAINE SAVAGE (×59)
+       LORRAINE SVAGE (×2)
+       LORNAINE SAVAGE (×1)
+       LORRAINE ASVAGE (×1)
+       LORRAINE FAVAGE (×1)
+       LORRAINE SAAGE (×1)
+       LORRAINE SAVAG (×1)
+       LORRAINE SAVAFE (×1)
+       LORRAIE SAVAGE (×1)
+       LORDAINE SAVAGE (×1)
+
+  [9] person_id=000ef425-36cb-4ecd-bfd5-35f335753499 (80 records, DOB: 1990-09-11)
+       DREW MOON (×66)
+       DEW MOON (×1)
+       DRCW MOON (×1)
+       DREB MOON (×1)
+       DREW LOON (×1)
+       DREW MON (×1)
+       DREW MONO (×1)
+       DREW MOOE (×1)
+       DREW MSON (×1)
+       DREW OON (×1)
+
+  [10] person_id=0046c83a-1279-4465-a4d9-0561c82fb9d2 (80 records, DOB: 1943-05-11)
+       KATE RODRIGUEZ (×65)
+       KAET RODRIGUEZ (×2)
+       KATE RODRIGHEZ (×2)
+       KATE ODRIGUEZ (×2)
+       KATE RODRIGUET (×1)
+       KATE RODRIGUZ (×1)
+       KATE RODRIUGEZ (×1)
+       KATE RORDIGUEZ (×1)
+       AKTE RODRIGUEZ (×1)
+       KTAE RODRIGUEZ (×1)
+
+--- Phonetic matches (Soundex collision, different DOBs) ---
+
+  [1] Soundex group (641 records, 425 different DOBs):
+       ABEGAIL ROSS (DOBs: 1966-10-14)
+       ABGAIL ROSE (DOBs: 1959-03-28)
+       ABGAIL ROSS (DOBs: 1966-10-14)
+       ABGAIL RUIZ (DOBs: 1988-12-07)
+       ABIAGIL RICE (DOBs: 1979-03-13)
+
+  [2] Soundex group (610 records, 446 different DOBs):
+       ABFGAIL MEZA (DOBs: 2001-06-09)
+       ABGIAIL MAYS (DOBs: 2000-11-03)
+       ABIAGIL MASSEY (DOBs: 1982-06-11, 1992-01-29)
+       ABIAGIL MAYS (DOBs: 1951-11-20, 1985-06-24)
+       ABIAGIL MEZA (DOBs: 1984-11-29)
+
+  [3] Soundex group (574 records, 375 different DOBs):
+       ABGIAIL BROCK (DOBs: 1966-06-27)
+       ABIAGIL BERG (DOBs: 1977-07-24)
+       ABIAGIL BROOKS (DOBs: 1972-07-19)
+       ABIAGIL BURKE (DOBs: 2006-03-15)
+       ABIGAIL BERG (DOBs: 1945-09-20, 1952-03-18, 1952-09-08)
+
+  [4] Soundex group (449 records, 325 different DOBs):
+       ABAGAIL PIERCE (DOBs: 1958-11-29)
+       ABGEL PARRISH (DOBs: 1993-04-04)
+       ABGELA PIERCE (DOBs: 1977-04-08)
+       ABIGAIL PARK (DOBs: 1943-09-19, 1944-03-18, 1945-10-24)
+       ABIGAIL PARKS (DOBs: 1943-09-24, 1943-12-01, 1944-08-28)
+
+  [5] Soundex group (439 records, 267 different DOBs):
+       ABGAIL MOORE (DOBs: 1945-12-25)
+       ABGAIL MOYER (DOBs: 1949-05-09)
+       ABIAGIL MORROW (DOBs: 1951-06-25)
+       ABIGAIL MAYER (DOBs: 1942-06-09, 1942-09-06, 1943-05-21)
+       ABIGAIL MEYER (DOBs: 1942-05-08, 1943-05-22, 1944-06-20)
+
+--- Nickname pairs (canonical name + nickname, same last name) ---
+
+  [1] Canonical: DANIEL MCCLAIN, DOB: 1985-11-24
+       Nickname:  DAN MCCLAIN, DOB: 2008-06-28
+
+  [2] Canonical: DANIEL MCCLAIN, DOB: 1967-12-02
+       Nickname:  DAN MCCLAIN, DOB: 2008-06-28
+
+  [3] Canonical: DANIEL REED, DOB: 1981-03-05
+       Nickname:  DANNY REED, DOB: 1987-11-19
+
+  [4] Canonical: DANIEL REED, DOB: 1961-11-01
+       Nickname:  DANNY REED, DOB: 1987-11-19
+
+  [5] Canonical: MICHAEL SWEENEY, DOB: 1949-01-02
+       Nickname:  MIKE SWEENEY, DOB: 1981-09-22
+
+--- Typo examples within clusters ---
+
+  [1] person_id=00000280-e7e8-4e0f-ab26-2a3e5c088109
+       Canonical: RENEE HUMPHREY
+       Typo:      ENEE HUMPHREY (first_name changed)
+
+  [2] person_id=0000076f-ce42-4bd4-a87b-bdf1415e70fd
+       Canonical: DAN MCDANIEL
+       Typo:      DA MCDANIEL (first_name changed)
+
+  [3] person_id=00000be0-200b-4045-bcca-dba7f63ce704
+       Canonical: BIANCA LEVINE
+       Typo:      BIANCA LEVINY (last_name changed)
+
+  [4] person_id=00000e3a-d415-428b-8f3c-916356cd108e
+       Canonical: KATELYN RICHMOND
+       Typo:      KTELYN RICHMOND (first_name changed)
+
+  [5] person_id=00000f30-ec04-4c73-a2c7-a4c78e7f2371
+       Canonical: DWAYNE FARRELL
+       Typo:      DWANYE FARRELL (first_name changed)
+
+----------------------------------------------------------------------

@@ -1,12 +1,13 @@
 """Custom Django ORM expressions for phonetic name search.
 
-Provides clean ORM wrappers for PostgreSQL fuzzy matching functions,
+Provides clean ORM wrappers for PostgreSQL fuzzystrmatch functions,
 enabling search logic to be expressed through the Django ORM instead
 of RawSQL.
 """
 
+from django.contrib.postgres.fields import ArrayField
 from django.db.models.expressions import Func
-from django.db.models.fields import IntegerField
+from django.db.models.fields import CharField, IntegerField
 
 
 class LevenshteinLessEqual(Func):
@@ -24,3 +25,30 @@ class LevenshteinLessEqual(Func):
 
     function = "levenshtein_less_equal"
     output_field = IntegerField()
+
+
+class Soundex(Func):
+    """PostgreSQL SOUNDEX() as a Django ORM expression.
+
+    Usage:
+        Soundex(Upper(F('first_name')))
+
+    Returns a 4-character Soundex code (str).
+    """
+
+    function = "SOUNDEX"
+    output_field = CharField()
+
+
+class DaitchMokotoff(Func):
+    """PostgreSQL DAITCH_MOKOTOFF() as a Django ORM expression.
+
+    Returns a text[] of Daitch-Mokotoff phonetic codes.
+    Supports GIN-indexed array overlap (&&) via __overlap.
+
+    Usage:
+        DaitchMokotoff(Upper(F('first_name')))
+    """
+
+    function = "DAITCH_MOKOTOFF"
+    output_field = ArrayField(CharField())

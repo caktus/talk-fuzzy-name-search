@@ -48,6 +48,7 @@
                                 Searching for:
                                 <span class="font-medium text-gray-900">{{ first_name }}</span>
                                 <span class="font-medium text-gray-900">{{ last_name }}</span>
+                                {% if date_of_birth %}<span class="font-medium text-gray-900">({{ date_of_birth }})</span>{% endif %}
                             </p>
                             <p class="text-xs text-gray-500 mt-1">{{ mode_description }}</p>
                         </div>

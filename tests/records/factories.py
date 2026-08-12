@@ -4,7 +4,6 @@ import factory
 from factory.django import DjangoModelFactory
 
 from records.models import Person
-from records.phonetics import soundex_tokens
 
 
 class PersonFactory(DjangoModelFactory):
@@ -23,11 +22,3 @@ class PersonFactory(DjangoModelFactory):
     )
     date_of_birth = factory.Faker("date_of_birth", minimum_age=18, maximum_age=80)
     nicknames = factory.LazyFunction(list)
-
-    @factory.post_generation
-    def obj(self, create, extracted, **kwargs):
-        """Auto-populate phonetic tokens after creation."""
-        if create:
-            self.first_name_phonetic = soundex_tokens(self.first_name)
-            self.last_name_phonetic = soundex_tokens(self.last_name)
-            self.save()
