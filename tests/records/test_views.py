@@ -276,17 +276,6 @@ class TestMatchSourceAnnotation:
         assert r["has_dm"] is False
         assert r["has_trigram"] is False
 
-    def test_match_labels_have_correct_names(self, client):
-        """MATCH_LABELS uses correct display names."""
-        response = client.get("/search/?modes=prefix&first_name=John&last_name=Smith")
-        assert response.status_code == 200
-        labels = response.context["match_labels"]
-        assert labels["prefix"]["label"] == "Exact Prefix"
-        assert labels["dm"]["label"] == "DM"
-        assert labels["soundex"]["label"] == "Soundex"
-        assert labels["trigram"]["label"] == "Trigram"
-        assert labels["legacy"]["label"] == "LIKE"
-
     def test_multiple_badges_render(self, client):
         """Multiple modes enabled show multiple badge flags."""
         response = client.get("/search/?modes=prefix,soundex&first_name=John&last_name=Smith")
@@ -456,6 +445,24 @@ class TestPhoneticCodes:
         r = response.context["results"][0]
         assert "phonetic_codes" in r
         assert "dm_fn" in r["phonetic_codes"]
+
+    def test_dm_codes_rendered_as_joined_strings(self, client):
+        """B16: DM codes (text[] in SQL) are joined into human-readable strings,
+        not Python list reprs like ['11 0', '10 0'], in both the query tooltip
+        codes and the per-result codes."""
+        Person.objects.create(
+            first_name="John",
+            last_name="Smith",
+            date_of_birth=date(1990, 1, 1),
+        )
+        response = client.get("/search/?modes=dm&first_name=John&last_name=Smith")
+        codes = response.context["phonetic_codes"]
+        assert isinstance(codes["dm_fn"], str)
+        assert isinstance(codes["dm_ln"], str)
+        assert "'" not in codes["dm_fn"] and "[" not in codes["dm_fn"]
+        r = response.context["results"][0]
+        assert isinstance(r["phonetic_codes"]["dm_fn"], str)
+        assert "'" not in r["phonetic_codes"]["dm_fn"]
 
 
 class TestHelpPage:
@@ -632,6 +639,17 @@ class TestModeSQLTooltipEscaping:
             {"modes": "trigram", "first_name": 'x" onmouseover="alert(1)'},
         )
         self._assert_escaped_in_tooltip(response, "x")
+
+    def test_phonetic_tooltips_use_real_line_breaks(self, client):
+        """B16: the Soundex/DM checkbox tooltips separate lines with &#10; (a real
+        line break in the tooltip), not a literal backslash-n."""
+        response = client.get("/search/?modes=soundex,dm&first_name=John&last_name=Smith")
+        assert response.status_code == 200
+        html = response.content.decode()
+        assert "Phonetic code equality.&#10;Soundex:" in html
+        assert "Slavic/Germanic names.&#10;DM:" in html
+        # No literal two-character backslash-n anywhere in the rendered page.
+        assert "\\n" not in html
 
 
 class TestMultipleModes:

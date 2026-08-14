@@ -11,6 +11,7 @@ from uuid import UUID
 import numpy as np
 import polars as pl
 import pytest
+from django.db import connection
 
 from records.management.commands.seed_data import Command
 from records.models import Person
@@ -306,6 +307,55 @@ class TestBulkInsert:
         cmd._bulk_insert(expanded)
         with_middle = Person.objects.exclude(middle_name__isnull=True).count()
         assert with_middle > len(expanded) * 0.8  # Allow some variance
+
+
+class TestBatchSizing:
+    """B10: the per-batch identity count is floored at 1000 and capped at 2M,
+    so memory is bounded to one batch at any --count."""
+
+    def test_first_batch_at_54m_is_capped_at_two_million(self):
+        """remaining=54M would sample 36M identities uncapped — the cap binds."""
+        assert Command._batch_identities(54_000_000) == 2_000_000
+
+    def test_cap_is_exact_boundary(self):
+        """Exactly 2M identities (3M rows at avg cluster 1.5) passes the cap."""
+        assert Command._batch_identities(3_000_000) == 2_000_000
+
+    def test_uncapped_size_when_below_cap(self):
+        """Small remaining counts keep the old (remaining / avg cluster size) sizing."""
+        assert Command._batch_identities(15_000) == 10_000
+
+    def test_floor_of_one_thousand(self):
+        """Tiny remaining counts floor the batch at 1000 identities."""
+        assert Command._batch_identities(1) == 1000
+        assert Command._batch_identities(1_500) == 1000
+
+
+class TestFlush:
+    """B16: --flush uses TRUNCATE ... RESTART IDENTITY, not DELETE."""
+
+    def test_flush_empties_table_and_restarts_sequence(self):
+        """After a flush the table is empty and the id sequence restarts at 1."""
+        first = Person.objects.create(first_name="John", last_name="Smith", date_of_birth="1990-01-01")
+        second = Person.objects.create(first_name="Jane", last_name="Doe", date_of_birth="1985-06-20")
+        assert second.id == first.id + 1
+
+        Command._flush()
+
+        assert Person.objects.count() == 0
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT last_value FROM records_person_id_seq")
+            assert cursor.fetchone()[0] == 1
+        # A fresh insert gets id 1 again (with DELETE the sequence would keep
+        # advancing past first.id + 1).
+        new = Person.objects.create(first_name="Ann", last_name="Alfa", date_of_birth="1990-02-02")
+        assert new.id == 1
+
+    def test_flush_on_empty_table_is_a_noop(self):
+        """Flushing an empty table does not error."""
+        assert Person.objects.count() == 0
+        Command._flush()
+        assert Person.objects.count() == 0
 
 
 class TestReproducibility:

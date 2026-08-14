@@ -78,12 +78,12 @@
                                     <label class="inline-flex items-center gap-1.5 text-sm cursor-pointer group">
                                         <input type="checkbox" class="mode-checkbox rounded border-gray-300 text-blue-600 shadow-sm focus:ring-blue-600" value="soundex" {% if "soundex" in enabled_modes %}checked{% endif %}>
                                         <span class="text-gray-700 group-hover:text-gray-900">{{ modes.soundex.label }}</span>
-                                        {% if mode_sql.soundex %}<span class="text-gray-400 cursor-help text-xs" title="Phonetic code equality.\nSoundex: {{ first_name }}={{ phonetic_codes.soundex_fn }}, {{ last_name }}={{ phonetic_codes.soundex_ln }}\n{{ mode_sql.soundex }}">(i)</span>{% endif %}
+                                        {% if mode_sql.soundex %}<span class="text-gray-400 cursor-help text-xs" title="Phonetic code equality.&#10;Soundex: {{ first_name }}={{ phonetic_codes.soundex_fn }}, {{ last_name }}={{ phonetic_codes.soundex_ln }}&#10;{{ mode_sql.soundex }}">(i)</span>{% endif %}
                                     </label>
                                     <label class="inline-flex items-center gap-1.5 text-sm cursor-pointer group">
                                         <input type="checkbox" class="mode-checkbox rounded border-gray-300 text-blue-600 shadow-sm focus:ring-blue-600" value="dm" {% if "dm" in enabled_modes %}checked{% endif %}>
                                         <span class="text-gray-700 group-hover:text-gray-900">{{ modes.dm.label }}</span>
-                                        {% if mode_sql.dm %}<span class="text-gray-400 cursor-help text-xs" title="Phonetic codes for Slavic/Germanic names.\nDM: {{ first_name }}={{ phonetic_codes.dm_fn }}, {{ last_name }}={{ phonetic_codes.dm_ln }}\n{{ mode_sql.dm }}">(i)</span>{% endif %}
+                                        {% if mode_sql.dm %}<span class="text-gray-400 cursor-help text-xs" title="Phonetic codes for Slavic/Germanic names.&#10;DM: {{ first_name }}={{ phonetic_codes.dm_fn }}, {{ last_name }}={{ phonetic_codes.dm_ln }}&#10;{{ mode_sql.dm }}">(i)</span>{% endif %}
                                     </label>
                                 </div>
                             </div>

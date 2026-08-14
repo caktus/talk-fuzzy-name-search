@@ -10,11 +10,16 @@ Previously failed at ~14GB RAM on 16GB machine. Now runs on 40GB with peak memor
 
 ### 1. Streaming insert (`_seed()`) — main fix
 
-Each batch is generated, expanded, and inserted immediately. No accumulation of all rows in memory.
+Each batch is generated, expanded, and inserted immediately. No accumulation of all rows across batches.
 
 - Before: `all_rows = pl.concat([all_rows, batch_rows])` grew to hold all 54M rows
 - After: generate → expand → insert → `del sampled, identities, batch_rows` → next batch
 - Added per-stage timing output
+- (B10, 2026-08-14) the per-batch identity count was **uncapped** at the time of this run, so the
+  first batch held the entire 36M-identity dataset in memory before any insert. Batch size is now
+  capped at 2M identities (~3M rows at the average cluster size), so memory is bounded to one
+  batch at any `--count` — the ~1.4 GB peak below was measured with the whole dataset as one
+  batch and is an upper bound, not a one-batch figure.
 
 ### 2. Numpy arrays for typo injection (`_expand_clusters()`)
 
@@ -69,9 +74,11 @@ The stage DB has **not** been re-seeded: re-seeding with the new generator produ
 
 ## Memory
 
-- Peak memory during 54M run: ~1.4 GB
+- Peak memory during 54M run: ~1.4 GB (that run's first batch was uncapped — the entire
+  36M-identity dataset; see the B10 note above)
 - Previous OOM: ~14 GB on 16GB machine
-- Streaming insert keeps memory bounded to one batch at a time
+- Streaming insert keeps memory bounded to one batch at a time (since B10: a batch is at most
+  2M identities ≈ 3M rows, independent of `--count`)
 
 ## Tests
 

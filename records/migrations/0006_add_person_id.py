@@ -6,7 +6,6 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("records", "0005_remove_phonetic_columns_make_dob_required"),
     ]
@@ -22,12 +21,6 @@ class Migration(migrations.Migration):
                 help_text="Links records representing the same real person (same DOB, name variants, typos)",
             ),
             preserve_default=False,
-        ),
-        # Backfill: give every existing record its own unique person_id
-        # (they're all independent since there was no clustering before)
-        migrations.RunPython(
-            code=migrations.RunPython.noop,  # Done in management command, not migration
-            reverse_code=migrations.RunPython.noop,
         ),
         # Add index for cluster lookups
         migrations.AddIndex(

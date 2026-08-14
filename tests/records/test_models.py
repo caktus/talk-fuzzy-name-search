@@ -293,6 +293,43 @@ class TestTrigramVisibility:
         ]
 
 
+class TestSearchUnifiedCap:
+    """B16: search_unified() is annotated -> list[Person] and documented as limited to 100;
+    no code path may return more than 100 rows."""
+
+    def test_name_search_capped_at_100(self):
+        """A name search with >100 matching rows returns at most 100 Person objects."""
+        dob = date(1990, 1, 1)
+        for i in range(150):
+            Person.objects.create(first_name=f"First{i}", last_name="Smith", date_of_birth=dob)
+        results = Person.objects.search_unified(["legacy"], "", "Smith")
+        assert isinstance(results, list)
+        assert len(results) <= 100
+        assert all(isinstance(p, Person) for p in results)
+
+    def test_dob_only_search_capped_at_100(self):
+        """A DOB-only search with >100 matching rows returns at most 100."""
+        dob = date(1990, 1, 1)
+        for i in range(150):
+            Person.objects.create(first_name=f"First{i}", last_name=f"Last{i}", date_of_birth=dob)
+        results = Person.objects.search_unified([], "", "", dob)
+        assert isinstance(results, list)
+        assert len(results) <= 100
+
+    def test_trigram_plus_base_capped_at_100(self):
+        """Trigram + base mode: base rows (capped at 60 to reserve trigram slots)
+        plus the KNN top-up never push the merged list past 100."""
+        dob = date(1990, 1, 1)
+        for _ in range(120):
+            Person.objects.create(first_name="John", last_name="Smith", date_of_birth=dob)
+        for first, last in [("Mary", "Smyth"), ("Tom", "Smythe"), ("Pat", "Smidt")]:
+            Person.objects.create(first_name=first, last_name=last, date_of_birth=dob)
+        results = Person.objects.search_unified(["legacy", "trigram"], "", "Smith")
+        assert isinstance(results, list)
+        assert len(results) <= 100
+        assert all(isinstance(p, Person) for p in results)
+
+
 class TestUnifiedSearchNicknameLimitation:
     """P1-12: unified search does not expand nicknames — pins the current behavior.
 

@@ -18,6 +18,8 @@ Distribution model (rewritten 2026-08-14 after RECS-2026-08-14 B3 — honest + d
     3. Identities generated in batches until expanded row total reaches --count.
        Each identity gets one DOB; cluster variants share that DOB and person_id.
        Cluster size: 80% singleton, 20% Pareto(1.5), clipped to [2, 80].
+       Each batch holds at most MAX_BATCH_IDENTITIES identities (B10), so
+       peak memory is bounded to one batch regardless of --count.
     4. Vectorized generation via Polars DataFrames.
     5. Bulk-insert in batches of 100,000.
 
@@ -44,6 +46,7 @@ from datetime import date, datetime, timedelta
 import numpy as np
 import polars as pl
 from django.core.management.base import BaseCommand, CommandError
+from django.db import connection
 from faker import Faker
 
 from records.models import Person
@@ -56,6 +59,8 @@ NICKNAME_RATE = 0.30
 MIDDLE_NAME_RATE = 0.90
 TYPO_RATE = 0.20  # of non-canonical rows in multi-member clusters
 BATCH_SIZE = 100_000
+MAX_BATCH_IDENTITIES = 2_000_000  # memory cap per generation batch (B10: ~3M rows at avg cluster size 1.5)
+SAMPLE_CASES_COUNT_LIMIT = 1_000_000  # skip post-seed sample cases above this --count
 
 
 class Command(BaseCommand):
@@ -74,7 +79,7 @@ class Command(BaseCommand):
         parser.add_argument(
             "--flush",
             action="store_true",
-            help="Delete existing records before seeding",
+            help="Truncate existing records (and reset the id sequence) before seeding",
         )
         parser.add_argument(
             "--seed",
@@ -92,6 +97,16 @@ class Command(BaseCommand):
                 "for exact reproducibility."
             ),
         )
+        parser.add_argument(
+            "--no-cases",
+            action="store_true",
+            help="Skip the post-seed sample-case generation (full-table soundex sort + unindexed scans)",
+        )
+        parser.add_argument(
+            "--print-cases",
+            action="store_true",
+            help="Force post-seed sample-case generation even for large --count (default: skipped above 1,000,000)",
+        )
 
     def handle(self, *args, **options):
         count = options["count"]
@@ -107,8 +122,9 @@ class Command(BaseCommand):
                 raise CommandError(f"Invalid --as-of date {options['as_of']!r}; expected YYYY-MM-DD") from None
 
         if flush:
-            deleted, _ = Person.objects.all().delete()
-            self.stdout.write(f"Flushed {deleted:,} existing records")
+            deleted = Person.objects.count()
+            self._flush()
+            self.stdout.write(f"Flushed {deleted:,} existing records (TRUNCATE records_person RESTART IDENTITY)")
 
         self.stdout.write(f"Generating {count:,} person records (seed={rng_seed}, as-of={as_of})...")
         start = time.perf_counter()
@@ -116,7 +132,15 @@ class Command(BaseCommand):
         elapsed = time.perf_counter() - start
         total = Person.objects.count()
         self.stdout.write(self.style.SUCCESS(f"Seeded {total:,} records in {elapsed:.1f}s"))
-        self._print_sample_cases()
+
+        # Post-seed sample cases are a full-table ORDER BY SOUNDEX sort plus
+        # unindexed scans: fine for small seeds, minutes at 54M. Run them by
+        # default only up to SAMPLE_CASES_COUNT_LIMIT; --no-cases always skips,
+        # --print-cases always forces.
+        if options["print_cases"] or (count <= SAMPLE_CASES_COUNT_LIMIT and not options["no_cases"]):
+            self._print_sample_cases()
+        elif not options["no_cases"]:
+            self.stdout.write("Sample-case generation skipped (count > 1,000,000); re-run with --print-cases to force.")
 
     # ------------------------------------------------------------------
     # Generation
@@ -152,7 +176,7 @@ class Command(BaseCommand):
         self.stdout.write(f"  Bulk inserting (batch size {BATCH_SIZE:,})...")
         while total_inserted < count:
             remaining = count - total_inserted
-            batch_identities = max(int(remaining / AVG_CLUSTER_SIZE), 1000)
+            batch_identities = self._batch_identities(remaining, AVG_CLUSTER_SIZE)
             batch_num += 1
 
             self.stdout.write(
@@ -178,6 +202,27 @@ class Command(BaseCommand):
 
             if total_inserted >= count:
                 self.stdout.write(f"  Trimmed to exact target: {count:,} rows")
+
+    @staticmethod
+    def _batch_identities(remaining: int, avg_cluster_size: float = 1.5) -> int:
+        """Number of identities to sample for the next batch (B10).
+
+        One batch targets ~`remaining` expanded rows (identities x avg cluster
+        size), floored at 1000 and capped at MAX_BATCH_IDENTITIES so memory is
+        bounded to a single batch (2M identities ~ 3M rows) at any --count.
+        """
+        return min(max(int(remaining / avg_cluster_size), 1000), MAX_BATCH_IDENTITIES)
+
+    @staticmethod
+    def _flush() -> None:
+        """Empty the person table and reset the id sequence.
+
+        TRUNCATE ... RESTART IDENTITY instead of DELETE: no per-row delete
+        overhead, no 54M dead tuples left for autovacuum, and new seeds
+        start at id 1 instead of continuing the sequence.
+        """
+        with connection.cursor() as cursor:
+            cursor.execute("TRUNCATE records_person RESTART IDENTITY")
 
     def _build_name_pool(self, pool_size: int, fake: Faker, rng: np.random.Generator) -> pl.DataFrame:
         """Build a pool of DISTINCT first/last name pairs.
@@ -531,8 +576,6 @@ class Command(BaseCommand):
 
     def _find_phonetic_collisions(self) -> list[list[dict]]:
         """Find groups of records with the same Soundex code but different DOBs."""
-        from django.db import connection
-
         with connection.cursor() as cursor:
             cursor.execute("""
                 SELECT p.first_name, p.last_name, p.date_of_birth,

@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import os
 from pathlib import Path
 
 import environ
@@ -98,7 +99,6 @@ DATABASES = {
         default="psql://postgres@localhost:5432/fuzzy_demo",
     ),
 }
-DATABASES["default"]["ATOMIC_REQUESTS"] = False
 
 
 # Password validation
@@ -153,11 +153,13 @@ DEBUG_TOOLBAR_CONFIG = {
 # =============================================================================
 # Kind (Kubernetes) settings
 # =============================================================================
-# Applied when ON_KIND environment variable is set (set by the Dockerfile).
-# This block configures the app for running inside a kind cluster with CNPG.
+# Applied only when ON_KIND / ON_KIND_SETUP is set. ON_KIND_SETUP is set by
+# the Dockerfile for build-time collectstatic; ON_KIND is set by the helm
+# configmap at runtime. The runtime env contract (helm configmap/secret):
+# DEBUG (parsed once at the top of this file), DJANGO_ALLOWED_HOSTS,
+# DJANGO_SECRET_KEY, APP_HOSTNAME, and either a DATABASE_URL connection
+# string or the individual DB_NAME/DB_USER/DB_PASSWORD/DB_HOST/DB_PORT vars.
 # =============================================================================
-
-import os
 
 if os.environ.get("ON_KIND_SETUP") or os.environ.get("ON_KIND"):
     # Static files (needed during Docker build and at runtime)
@@ -186,18 +188,20 @@ if os.environ.get("ON_KIND"):
     # Security settings
     SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", SECRET_KEY)
 
-    if os.environ.get("DEBUG") == "FALSE":
-        DEBUG = False
-    elif os.environ.get("DEBUG") == "TRUE":
-        DEBUG = True
+    # DEBUG is intentionally NOT re-parsed here: the single parse at the top
+    # of this file (env("DEBUG"), bool with default True) is the only one.
 
     # Allowed hosts
     hostname = os.environ.get("DJANGO_ALLOWED_HOSTS", "*")
     ALLOWED_HOSTS = [h.strip() for h in hostname.split(",")]
 
-    # Database: use DATABASE_URL from CNPG (psycopg3 format)
+    # Database: use the DATABASE_URL connection string (psycopg3 format,
+    # e.g. postgresql://user:pass@host:5432/db) when present, else fall back
+    # to the individual DB_* variables. Same defaults as before.
     db_url = os.environ.get("DATABASE_URL")
     if db_url:
+        DATABASES["default"] = env.db_url_config(db_url)
+    else:
         DATABASES["default"] = {
             "ENGINE": "django.db.backends.postgresql",
             "NAME": os.environ.get("DB_NAME", "fuzzy_demo"),

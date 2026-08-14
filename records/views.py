@@ -77,15 +77,6 @@ MATCH_BITS = {
     "trigram": 32,
 }
 
-# Badge colors for the template
-MATCH_LABELS = {
-    "prefix": {"label": "Exact Prefix", "color": "bg-green-50 text-green-700 ring-green-600/20"},
-    "legacy": {"label": "LIKE", "color": "bg-gray-50 text-gray-700 ring-gray-600/20"},
-    "soundex": {"label": "Soundex", "color": "bg-blue-50 text-blue-700 ring-blue-600/20"},
-    "dm": {"label": "DM", "color": "bg-purple-50 text-purple-700 ring-purple-600/20"},
-    "trigram": {"label": "Trigram", "color": "bg-indigo-50 text-indigo-700 ring-indigo-600/20"},
-}
-
 DEFAULT_MODES = [k for k, v in SEARCH_MODES.items() if v["default"]]
 
 # Base modes that Levenshtein can refine. Levenshtein is a precision filter
@@ -159,8 +150,6 @@ def _run_unified_search(modes: list[str], first_name: str, last_name: str, date_
     if not first_name and not last_name and not date_of_birth:
         return {"results": [], "elapsed_ms": 0, "count": 0}
 
-    from django.db import connection
-
     start = time.perf_counter()
     persons = Person.objects.search_unified(modes, first_name, last_name, date_of_birth)
     elapsed_ms = (time.perf_counter() - start) * 1000
@@ -209,8 +198,9 @@ def _run_unified_search(modes: list[str], first_name: str, last_name: str, date_
                 codes_by_id[row[0]] = {
                     "soundex_fn": row[1],
                     "soundex_ln": row[2],
-                    "dm_fn": row[3],
-                    "dm_ln": row[4],
+                    # DM codes come back as text[] lists — join for the tooltip
+                    "dm_fn": ", ".join(row[3]),
+                    "dm_ln": ", ".join(row[4]),
                 }
             for r in results:
                 r["phonetic_codes"] = codes_by_id.get(r["person"].id, {})
@@ -277,9 +267,11 @@ def _mode_sql(mode: str, first_name: str, last_name: str, enabled: bool) -> str:
 
 
 def _get_phonetic_codes(first_name: str, last_name: str) -> dict:
-    """Compute Soundex and DM codes for the query names."""
-    from django.db import connection
+    """Compute Soundex and DM codes for the query names.
 
+    DM codes are returned as human-readable strings (", ".join of the
+    code list), not Python list reprs.
+    """
     codes = {}
     fn = first_name.upper()
     ln = last_name.upper()
@@ -289,12 +281,12 @@ def _get_phonetic_codes(first_name: str, last_name: str) -> dict:
                 c.execute("SELECT SOUNDEX(%s), DAITCH_MOKOTOFF(%s)", [fn, fn])
                 row = c.fetchone()
                 codes["soundex_fn"] = row[0]
-                codes["dm_fn"] = row[1]
+                codes["dm_fn"] = ", ".join(row[1])
             if ln:
                 c.execute("SELECT SOUNDEX(%s), DAITCH_MOKOTOFF(%s)", [ln, ln])
                 row = c.fetchone()
                 codes["soundex_ln"] = row[0]
-                codes["dm_ln"] = row[1]
+                codes["dm_ln"] = ", ".join(row[1])
     return codes
 
 
@@ -312,7 +304,6 @@ def _search_response(request: HttpRequest) -> HttpResponse:
             "modes": SEARCH_MODES,
             "enabled_modes": enabled_modes,
             "has_base_mode": any(m in BASE_MODES for m in enabled_modes),
-            "match_labels": MATCH_LABELS,
             "first_name": first_name,
             "last_name": last_name,
             "date_of_birth": date_of_birth,
@@ -344,16 +335,12 @@ def help_page(request: HttpRequest) -> HttpResponse:
     # but only one wins the add — the other's result is discarded, which
     # is fine for a human-paced button.
     if request.GET.get("refresh"):
-        from django.core.cache import cache
-
         cache.delete("help_examples")
     return TemplateResponse(request, "records/help.html", {"examples": _get_help_examples()})
 
 
 def _get_help_examples() -> dict:
     """Generate cached dynamic examples for the help page."""
-    from django.core.cache import cache
-
     examples = cache.get("help_examples")
     if examples:
         return examples
@@ -371,8 +358,6 @@ def _get_help_examples() -> dict:
 def _generate_help_examples() -> dict:
     """Generate dynamic examples for the help page."""
     from datetime import date
-
-    from django.db import connection
 
     # Pick a random DOB that gives us 5-20 results, without sorting the
     # whole table (B5). TABLESAMPLE SYSTEM takes a PERCENT (0-100), so

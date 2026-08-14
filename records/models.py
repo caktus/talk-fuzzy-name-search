@@ -18,7 +18,7 @@ from django.db.models.expressions import ExpressionWrapper, RawSQL
 from django.db.models.fields import BooleanField, UUIDField
 from django.db.models.functions import Upper
 
-from .expressions import DaitchMokotoff, LevenshteinLessEqual, Soundex
+from .expressions import LevenshteinLessEqual
 from .phonetics import resolve_variants
 
 
@@ -125,7 +125,7 @@ class PersonQuerySet(models.QuerySet):
 
         Either name may be empty; only the provided name(s) are used to filter.
         """
-        return self._phonetic_search(first_name, last_name, Soundex, date_of_birth, is_array=False)
+        return self._phonetic_search(first_name, last_name, date_of_birth, is_array=False)
 
     def search_dm(self, first_name: str, last_name: str, date_of_birth: datetime.date | None = None) -> PersonQuerySet:
         """Daitch-Mokotoff + Levenshtein search using PostgreSQL fuzzystrmatch.
@@ -142,13 +142,12 @@ class PersonQuerySet(models.QuerySet):
 
         Either name may be empty; only the provided name(s) are used to filter.
         """
-        return self._phonetic_search(first_name, last_name, DaitchMokotoff, date_of_birth, is_array=True)
+        return self._phonetic_search(first_name, last_name, date_of_birth, is_array=True)
 
     def _phonetic_search(
         self,
         first_name: str,
         last_name: str,
-        phonetic_fn: type[Soundex] | type[DaitchMokotoff],
         date_of_birth: datetime.date | None,
         is_array: bool,
     ) -> PersonQuerySet:
@@ -315,10 +314,11 @@ class PersonQuerySet(models.QuerySet):
         last_name: str,
         date_of_birth: datetime.date | None = None,
     ) -> list[Person]:
-        """Unified search combining multiple algorithms via Q objects + UNION.
+        """Unified search combining multiple algorithms (OR-ed Q object; trigram rows merged in Python from a separate KNN query).
 
-        Each enabled mode adds its condition to an OR-ed Q object.
-        Trigram is handled via UNION (it uses ORDER BY, not a filter).
+        Each enabled base mode adds its condition to an OR-ed Q object.
+        Trigram runs as a separate ORDER BY KNN query whose rows are merged
+        in (not a SQL filter).
 
         Nickname expansion is deliberately dropped for the unified search:
         no base filter consults NICKNAME_MAP and the Levenshtein refinement
@@ -373,7 +373,8 @@ class PersonQuerySet(models.QuerySet):
             qs = apply_levenshtein_filter(qs, first_name, last_name)
 
         # Annotate match_source bitmask using SQL CASE expressions
-        # prefix=1, legacy=2, soundex=4, levenshtein=8, dm=16
+        # prefix=1, legacy=2, soundex=4, dm=16 (trigram=32 is set in Python
+        # for the KNN top-up rows, not in SQL)
         annotation_parts = []
         annotation_params = []
 
@@ -481,6 +482,10 @@ class Person(models.Model):
     last_name = models.CharField(max_length=50)
     middle_name = models.CharField(max_length=50, blank=True, null=True)
     date_of_birth = models.DateField()
+    # Both fields below are populated by seed_data but currently UNUSED by
+    # any search path (RECS-2026-08-14 P1-12, B16): cluster variants of one
+    # person surface as separate result rows, and nickname expansion is
+    # deliberately dropped from search_unified().
     nicknames = ArrayField(
         models.CharField(max_length=50),
         default=list,
