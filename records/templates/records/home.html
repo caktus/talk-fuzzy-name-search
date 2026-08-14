@@ -128,7 +128,7 @@
                             <div>
                                 <div class="flex items-center justify-between mb-1">
                                     <label for="date_of_birth" class="block text-sm font-medium text-gray-700">Date of Birth</label>
-                                    <button type="button" id="dob-clear-btn" class="dob-clear-link text-xs font-medium text-primary-700 hover:underline hidden">Clear</button>
+                                    <button type="button" id="dob-clear-btn" class="dob-clear-link text-xs font-medium text-primary-700 hover:underline{% if not date_of_birth %} hidden{% endif %}">Clear</button>
                                 </div>
                                 <input type="date" id="date_of_birth" name="date_of_birth"
                                        value="{{ date_of_birth|date:'Y-m-d'|default:'' }}"
@@ -196,20 +196,12 @@
             }
         });
         function updateDobClear() {
-            var dob = document.getElementById('date_of_birth').value;
+            var dob = document.getElementById('date_of_birth').value.trim();
             var clearBtn = document.querySelector('.dob-clear-link');
-            if (dob && !clearBtn) {
-                var label = document.querySelector('label[for="date_of_birth"]').parentElement;
-                var btn = document.createElement('button');
-                btn.type = 'button';
-                btn.className = 'dob-clear-link text-xs font-medium text-primary-700 hover:underline';
-                btn.textContent = 'Clear';
-                label.appendChild(btn);
-            } else if (!dob && clearBtn) {
-                clearBtn.remove();
-            }
+            if (clearBtn) clearBtn.classList.toggle('hidden', !dob);
         }
         document.getElementById('date_of_birth').addEventListener('change', updateDobClear);
+        document.body.addEventListener('htmx:afterSwap', updateDobClear);
         updateLevenshteinState();
         updateModes();
         updateDobClear();

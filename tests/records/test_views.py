@@ -608,6 +608,36 @@ class TestDobOnlySearchRendering:
         assert "Taylor" not in html
 
 
+class TestDobClearButtonRendering:
+    """B9: the DOB Clear button always exists; its initial hidden state matches the rendered DOB."""
+
+    def test_clear_button_hidden_without_dob(self, client):
+        """No DOB in the URL -> the Clear button exists but is hidden."""
+        response = client.get("/")
+        assert response.status_code == 200
+        html = response.content.decode()
+        assert 'id="dob-clear-btn"' in html
+        assert 'class="dob-clear-link text-xs font-medium text-primary-700 hover:underline hidden"' in html
+
+    def test_clear_button_visible_with_dob(self, client):
+        """DOB in the URL (htmx hx-push-url refresh) -> Clear button exists and is not hidden."""
+        response = client.get("/?date_of_birth=1990-05-15")
+        assert response.status_code == 200
+        html = response.content.decode()
+        assert 'id="dob-clear-btn"' in html
+        assert 'class="dob-clear-link text-xs font-medium text-primary-700 hover:underline"' in html
+        assert 'class="dob-clear-link text-xs font-medium text-primary-700 hover:underline hidden"' not in html
+        # The input is prefilled from the query param, so the client-side toggle keeps it visible.
+        assert 'value="1990-05-15"' in html
+
+    def test_clear_button_js_is_single_toggle(self, client):
+        """Page JS toggles `hidden` on the always-present button; create/remove branches are gone."""
+        html = client.get("/").content.decode()
+        assert "classList.toggle('hidden', !dob)" in html
+        assert "createElement('button')" not in html
+        assert "clearBtn.remove()" not in html
+
+
 class TestTop100Label:
     """B6: the results badge says 'top N', not an unqualified total."""
 
