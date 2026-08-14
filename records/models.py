@@ -116,8 +116,12 @@ class PersonQuerySet(models.QuerySet):
 
         Uses SOUNDEX() from the fuzzystrmatch extension for broad phonetic
         pre-filtering (with functional B-tree index support), followed by
-        Levenshtein distance for precision filtering. Nickname-tolerant via
-        resolve_variants() expansion on the query name.
+        Levenshtein distance for precision filtering. The phonetic pre-filter
+        is expanded across the query name's nickname variants
+        (resolve_variants()), but the Levenshtein filter is measured against
+        the query as typed — so only nicknames within edit distance 2 of the
+        stored name match (e.g. 'Bil' -> 'Bill'); 'Bill' -> 'William'
+        (distance 4) does not.
 
         Either name may be empty; only the provided name(s) are used to filter.
         """
@@ -130,7 +134,11 @@ class PersonQuerySet(models.QuerySet):
         phonetic pre-filtering (with functional GIN index support), followed
         by Levenshtein distance for precision filtering. DM handles vowels and
         multi-letter clusters differently, giving better coverage for
-        Slavic/Germanic names. Nickname-tolerant via resolve_variants().
+        Slavic/Germanic names. Like search_phonetic(), the phonetic
+        pre-filter is expanded across the query's nickname variants
+        (resolve_variants()) but the Levenshtein filter is measured against
+        the query as typed, so nickname pairs farther than edit distance 2 do
+        not match (e.g. 'Bob' -> 'Robert', distance 4).
 
         Either name may be empty; only the provided name(s) are used to filter.
         """
@@ -311,7 +319,12 @@ class PersonQuerySet(models.QuerySet):
 
         Each enabled mode adds its condition to an OR-ed Q object.
         Trigram is handled via UNION (it uses ORDER BY, not a filter).
-        Nickname expansion is dropped for the unified search.
+
+        Nickname expansion is deliberately dropped for the unified search:
+        no base filter consults NICKNAME_MAP and the Levenshtein refinement
+        is measured against the query as typed, so 'Bill' does not find
+        'William' (distance 4). See RECS-2026-08-14 P1-12 — nickname support
+        would require variant-aware filtering.
 
         Args:
             modes: List of enabled mode names (e.g., ['prefix', 'soundex']).

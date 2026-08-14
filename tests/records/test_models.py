@@ -291,3 +291,63 @@ class TestTrigramVisibility:
             ("Ike", "Cherry"),
             ("Zed", "Zebra"),
         ]
+
+
+class TestUnifiedSearchNicknameLimitation:
+    """P1-12: unified search does not expand nicknames — pins the current behavior.
+
+    No base filter consults NICKNAME_MAP and the Levenshtein refinement is
+    measured against the query as typed, so nickname-to-canonical pairs
+    farther than edit distance 2 do not match. If these start passing, the
+    change was deliberate — update these tests alongside the docstrings and
+    UI copy (see RECS-2026-08-14 P1-12).
+    """
+
+    @pytest.fixture(autouse=True)
+    def _seed_data(self):
+        self.dob = date(1990, 5, 15)
+        Person.objects.create(first_name="William", last_name="Smith", date_of_birth=self.dob)
+        Person.objects.create(first_name="Robert", last_name="Smith", date_of_birth=self.dob)
+        Person.objects.create(first_name="Bill", last_name="Smith", date_of_birth=self.dob)
+
+    def test_unified_bill_does_not_find_william(self):
+        """'Bill' does not surface 'William Smith' via legacy + Levenshtein.
+
+        Fails at both stages: 'WILLIAM' has no 'BILL' substring (legacy base
+        filter), and the Levenshtein refinement is measured against the query
+        as typed — dist('WILLIAM', 'BILL') = 4 > 2 — with no variant
+        expansion to WILLIAM/BILLY/WILL. The exact 'Bill Smith' row still
+        matches, so the search itself is not vacuous.
+        """
+        results = Person.objects.search_unified(["legacy", "levenshtein"], "Bill", "Smith", self.dob)
+        assert [(p.first_name, p.last_name) for p in results] == [("Bill", "Smith")]
+
+    def test_unified_dm_bob_does_not_find_robert(self):
+        """'Bob' does not find 'Robert Smith' in dm mode.
+
+        Fails at the DM pre-filter: DAITCH_MOKOTOFF('BOB') (['770000']) and
+        DAITCH_MOKOTOFF('ROBERT') (['979300']) share no code, and the unified
+        search does not expand 'Bob' to ROBERT/ROB/BOBBY via resolve_variants().
+        """
+        results = Person.objects.search_unified(["dm"], "Bob", "Smith", self.dob)
+        assert [(p.first_name, p.last_name) for p in results] == []
+
+    def test_unified_levenshtein_still_finds_distance_one_typo(self):
+        """Positive control: 'Bil' does find 'Bill Smith' (distance 1 ≤ 2).
+
+        Ensures the negative tests pin the nickname limitation rather than a
+        broken Levenshtein refinement.
+        """
+        results = Person.objects.search_unified(["legacy", "levenshtein"], "Bil", "Smith", self.dob)
+        assert [(p.first_name, p.last_name) for p in results] == [("Bill", "Smith")]
+
+    def test_standalone_search_dm_still_requires_distance_two(self):
+        """Even standalone search_dm() does not find 'Robert' for 'Bob'.
+
+        The phonetic pre-filter does expand 'Bob' to ROBERT/ROB/BOBBY via
+        resolve_variants(), but the Levenshtein precision filter is measured
+        against the query as typed: dist('ROBERT', 'BOB') = 4 > 2. Pins the
+        search_dm() docstring claim.
+        """
+        results = Person.objects.search_dm("Bob", "Smith")
+        assert [(p.first_name, p.last_name) for p in results] == []
