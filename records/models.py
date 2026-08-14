@@ -13,13 +13,97 @@ from uuid import uuid4
 from django.contrib.postgres.fields import ArrayField
 from django.contrib.postgres.indexes import GinIndex, GistIndex, OpClass
 from django.db import models
-from django.db.models import F, Value
+from django.db.models import F, Q, Value
 from django.db.models.expressions import ExpressionWrapper, RawSQL
 from django.db.models.fields import BooleanField, UUIDField
 from django.db.models.functions import Upper
 
 from .expressions import DaitchMokotoff, LevenshteinLessEqual, Soundex
 from .phonetics import resolve_variants
+
+
+def build_unified_filter(modes: list[str], first_name: str, last_name: str) -> Q:
+    """Build the OR-ed WHERE condition that search_unified() runs for base modes.
+
+    Each of prefix/legacy/soundex/dm contributes one AND-ed group of
+    conditions (both names must match when both are given); the groups are
+    OR-ed together. No nickname expansion is applied (it is dropped for the
+    unified search). Levenshtein and trigram are intentionally excluded:
+    Levenshtein is a precision filter applied on top (see
+    apply_levenshtein_filter) and trigram runs as a separate KNN ORDER BY
+    query (see PersonQuerySet.trigram_ordered).
+
+    Returns an empty Q() when no base mode can build a condition.
+    """
+    fn_upper = first_name.upper() if first_name else ""
+    ln_upper = last_name.upper() if last_name else ""
+
+    q = Q()
+
+    if "prefix" in modes:
+        mode_q = Q()
+        if first_name:
+            mode_q &= Q(first_name__istartswith=first_name)
+        if last_name:
+            mode_q &= Q(last_name__istartswith=last_name)
+        if mode_q:
+            q |= mode_q
+
+    if "legacy" in modes:
+        mode_q = Q()
+        if first_name:
+            mode_q &= Q(first_name__icontains=first_name)
+        if last_name:
+            mode_q &= Q(last_name__icontains=last_name)
+        if mode_q:
+            q |= mode_q
+
+    if "soundex" in modes:
+        fn_part = "SOUNDEX(UPPER(first_name)) = SOUNDEX(%s)" if first_name else None
+        ln_part = "SOUNDEX(UPPER(last_name)) = SOUNDEX(%s)" if last_name else None
+        if fn_part and ln_part:
+            sql, params = f"({fn_part}) AND ({ln_part})", [fn_upper, ln_upper]
+        elif fn_part:
+            sql, params = fn_part, [fn_upper]
+        elif ln_part:
+            sql, params = ln_part, [ln_upper]
+        else:
+            sql, params = None, []
+        if sql:
+            q |= ExpressionWrapper(RawSQL(sql, params), output_field=BooleanField())
+
+    if "dm" in modes:
+        fn_part = "DAITCH_MOKOTOFF(UPPER(first_name)) && DAITCH_MOKOTOFF(%s)" if first_name else None
+        ln_part = "DAITCH_MOKOTOFF(UPPER(last_name)) && DAITCH_MOKOTOFF(%s)" if last_name else None
+        if fn_part and ln_part:
+            sql, params = f"({fn_part}) AND ({ln_part})", [fn_upper, ln_upper]
+        elif fn_part:
+            sql, params = fn_part, [fn_upper]
+        elif ln_part:
+            sql, params = ln_part, [ln_upper]
+        else:
+            sql, params = None, []
+        if sql:
+            q |= ExpressionWrapper(RawSQL(sql, params), output_field=BooleanField())
+
+    return q
+
+
+def apply_levenshtein_filter(qs: PersonQuerySet, first_name: str, last_name: str) -> PersonQuerySet:
+    """Apply the Levenshtein precision filter (edit distance ≤ 2) as an AND.
+
+    Exactly what search_unified() applies on top of the base modes: only the
+    provided name(s) are filtered.
+    """
+    if first_name:
+        qs = qs.annotate(
+            _fn_dist=LevenshteinLessEqual(Upper(F("first_name")), Value(first_name.upper()), Value(2))
+        ).filter(_fn_dist__lte=2)
+    if last_name:
+        qs = qs.annotate(
+            _ln_dist=LevenshteinLessEqual(Upper(F("last_name")), Value(last_name.upper()), Value(2))
+        ).filter(_ln_dist__lte=2)
+    return qs
 
 
 class PersonQuerySet(models.QuerySet):
@@ -163,6 +247,20 @@ class PersonQuerySet(models.QuerySet):
 
         return qs
 
+    def trigram_ordered(self, first_name: str, last_name: str) -> PersonQuerySet:
+        """Apply the pg_trgm KNN ORDER BY used by search_unified()'s trigram mode.
+
+        Callers must ensure at least one name is provided.
+        """
+        if first_name and last_name:
+            return self.annotate(
+                _last_dist=RawSQL("(last_name <-> %s)", [last_name]),
+                _first_dist=RawSQL("(first_name <-> %s)", [first_name]),
+            ).order_by("_last_dist", "_first_dist")
+        if last_name:
+            return self.annotate(_dist=RawSQL("(last_name <-> %s)", [last_name])).order_by("_dist")
+        return self.annotate(_dist=RawSQL("(first_name <-> %s)", [first_name])).order_by("_dist")
+
     def search_legacy(
         self, first_name: str, last_name: str, date_of_birth: datetime.date | None = None
     ) -> PersonQuerySet:
@@ -226,7 +324,7 @@ class PersonQuerySet(models.QuerySet):
             materializes and caps at 100, so callers get a bounded, already-
             fetched list and timing around the call covers the DB fetch.
         """
-        from django.db.models import IntegerField, Q, Value
+        from django.db.models import IntegerField
 
         if not first_name and not last_name and not date_of_birth:
             return []
@@ -234,58 +332,9 @@ class PersonQuerySet(models.QuerySet):
         fn_upper = first_name.upper() if first_name else ""
         ln_upper = last_name.upper() if last_name else ""
 
-        # Each mode builds a condition. When both names are provided,
-        # the mode must match BOTH (AND). When only one name is provided,
-        # it matches that one. Modes are combined with OR.
-        q = Q()
-
-        if "prefix" in modes:
-            mode_q = Q()
-            if first_name:
-                mode_q &= Q(first_name__istartswith=first_name)
-            if last_name:
-                mode_q &= Q(last_name__istartswith=last_name)
-            if mode_q:
-                q |= mode_q
-
-        if "legacy" in modes:
-            mode_q = Q()
-            if first_name:
-                mode_q &= Q(first_name__icontains=first_name)
-            if last_name:
-                mode_q &= Q(last_name__icontains=last_name)
-            if mode_q:
-                q |= mode_q
-
-        if "soundex" in modes:
-            fn_part = "SOUNDEX(UPPER(first_name)) = SOUNDEX(%s)" if first_name else None
-            ln_part = "SOUNDEX(UPPER(last_name)) = SOUNDEX(%s)" if last_name else None
-            if fn_part and ln_part:
-                sql = f"({fn_part}) AND ({ln_part})"
-                params = [fn_upper, ln_upper]
-            elif fn_part:
-                sql, params = fn_part, [fn_upper]
-            elif ln_part:
-                sql, params = ln_part, [ln_upper]
-            else:
-                sql, params = None, []
-            if sql:
-                q |= ExpressionWrapper(RawSQL(sql, params), output_field=BooleanField())
-
-        if "dm" in modes:
-            fn_part = "DAITCH_MOKOTOFF(UPPER(first_name)) && DAITCH_MOKOTOFF(%s)" if first_name else None
-            ln_part = "DAITCH_MOKOTOFF(UPPER(last_name)) && DAITCH_MOKOTOFF(%s)" if last_name else None
-            if fn_part and ln_part:
-                sql = f"({fn_part}) AND ({ln_part})"
-                params = [fn_upper, ln_upper]
-            elif fn_part:
-                sql, params = fn_part, [fn_upper]
-            elif ln_part:
-                sql, params = ln_part, [ln_upper]
-            else:
-                sql, params = None, []
-            if sql:
-                q |= ExpressionWrapper(RawSQL(sql, params), output_field=BooleanField())
+        # Base-mode conditions, shared with the EXPLAIN endpoint so both
+        # use the exact same query construction as the search that ran.
+        q = build_unified_filter(modes, first_name, last_name)
 
         if not q and "trigram" not in modes:
             # No base mode could build a condition (e.g. only Levenshtein is
@@ -308,22 +357,7 @@ class PersonQuerySet(models.QuerySet):
 
         # Levenshtein as a precision filter (AND) on top of the other modes
         if "levenshtein" in modes:
-            if first_name:
-                qs = qs.annotate(
-                    _fn_dist=LevenshteinLessEqual(
-                        Upper(F("first_name")),
-                        Value(fn_upper),
-                        Value(2),
-                    )
-                ).filter(_fn_dist__lte=2)
-            if last_name:
-                qs = qs.annotate(
-                    _ln_dist=LevenshteinLessEqual(
-                        Upper(F("last_name")),
-                        Value(ln_upper),
-                        Value(2),
-                    )
-                ).filter(_ln_dist__lte=2)
+            qs = apply_levenshtein_filter(qs, first_name, last_name)
 
         # Annotate match_source bitmask using SQL CASE expressions
         # prefix=1, legacy=2, soundex=4, levenshtein=8, dm=16
@@ -403,15 +437,7 @@ class PersonQuerySet(models.QuerySet):
             tri_qs = self
             if date_of_birth:
                 tri_qs = tri_qs.filter(date_of_birth=date_of_birth)
-            if first_name and last_name:
-                tri_qs = tri_qs.annotate(
-                    _last_dist=RawSQL("(last_name <-> %s)", [last_name]),
-                    _first_dist=RawSQL("(first_name <-> %s)", [first_name]),
-                ).order_by("_last_dist", "_first_dist")
-            elif last_name:
-                tri_qs = tri_qs.annotate(_dist=RawSQL("(last_name <-> %s)", [last_name])).order_by("_dist")
-            elif first_name:
-                tri_qs = tri_qs.annotate(_dist=RawSQL("(first_name <-> %s)", [first_name])).order_by("_dist")
+            tri_qs = tri_qs.trigram_ordered(first_name, last_name)
             for obj in tri_qs[:100]:
                 if obj.id not in main_ids:
                     obj._match_source = 32

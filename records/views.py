@@ -15,7 +15,7 @@ from django.http import HttpRequest, HttpResponse
 from django.template.response import TemplateResponse
 from django.utils.dateparse import parse_date
 
-from .models import Person
+from .models import Person, apply_levenshtein_filter, build_unified_filter
 
 # Person.objects.count() is a full-table COUNT(*) -- on the 50M-row demo
 # table that's a ~600ms sequential-ish scan, and it's on every page load.
@@ -95,17 +95,53 @@ DEFAULT_MODES = [k for k, v in SEARCH_MODES.items() if v["default"]]
 BASE_MODES = ["prefix", "legacy", "soundex", "dm", "trigram"]
 
 
-def _queryset_for(mode: str, first_name: str, last_name: str, date_of_birth=None):
-    """Return the QuerySet implementing the given search mechanism (for EXPLAIN)."""
-    if mode == "legacy":
-        return Person.objects.search_legacy(first_name, last_name, date_of_birth)
-    if mode == "prefix":
-        return Person.objects.search_exact(first_name, last_name, date_of_birth)
-    if mode == "trigram":
-        return Person.objects.search_trigram(first_name, last_name, date_of_birth)
-    if mode == "dm":
-        return Person.objects.search_dm(first_name, last_name, date_of_birth)
-    return Person.objects.search_phonetic(first_name, last_name, date_of_birth)
+def _parse_explain_modes(request: HttpRequest) -> list[str]:
+    """Parse the explain mode list from ?modes=a,b (or legacy ?mode=a).
+
+    Unknown mode names are dropped; if nothing valid remains (or no mode was
+    given at all) fall back to ["prefix"] — the previous single-mode behavior.
+    """
+    modes_param = request.GET.get("modes") or request.GET.get("mode", "")
+    tokens = [t.strip() for t in modes_param.split(",") if t.strip()]
+    valid = [t for t in tokens if t in SEARCH_MODES]
+    return valid if valid else ["prefix"]
+
+
+def _explain_queryset_for(modes: list[str], first_name: str, last_name: str, date_of_birth=None):
+    """Build the exact queryset search_unified() runs for this mode set.
+
+    Returns (queryset, kind) where kind is "main" (the OR-ed filter query,
+    with the Levenshtein precision filter and DOB applied the same way
+    search_unified applies them) or "trigram" (the separate KNN
+    ORDER BY ... LIMIT 100 query). Returns (None, None) when
+    search_unified() would run no query at all (e.g. Levenshtein checked
+    without any base mode and no DOB).
+    """
+    has_name = bool(first_name or last_name)
+
+    if "trigram" in modes and has_name:
+        # search_unified() runs trigram as a separate KNN ORDER BY query,
+        # even alongside other base modes — that's the query users care
+        # about for trigram, so it is the deterministic primary to explain.
+        tri_qs = Person.objects
+        if date_of_birth:
+            tri_qs = tri_qs.filter(date_of_birth=date_of_birth)
+        return tri_qs.trigram_ordered(first_name, last_name)[:100], "trigram"
+
+    q = build_unified_filter(modes, first_name, last_name)
+    if not q:
+        if date_of_birth:
+            # DOB-only path (unchanged): explain the bare DOB filter.
+            return Person.objects.filter(date_of_birth=date_of_birth)[:100], "main"
+        return None, None
+
+    qs = Person.objects.filter(q)
+    if date_of_birth:
+        qs = qs.filter(date_of_birth=date_of_birth)
+    qs = qs.order_by("last_name", "first_name")
+    if "levenshtein" in modes:
+        qs = apply_levenshtein_filter(qs, first_name, last_name)
+    return qs[:100], "main"
 
 
 def _get_enabled_modes(request: HttpRequest) -> list[str]:
@@ -469,10 +505,8 @@ def _generate_help_examples() -> dict:
 
 
 def search_explain(request: HttpRequest) -> HttpResponse:
-    """EXPLAIN ANALYZE endpoint for the single query launched from the search page."""
-    mode = request.GET.get("mode", "prefix")
-    if mode not in SEARCH_MODES:
-        mode = "prefix"
+    """EXPLAIN ANALYZE endpoint for the query search_unified() actually runs."""
+    modes = _parse_explain_modes(request)
     first_name = request.GET.get("first_name", "").strip()
     last_name = request.GET.get("last_name", "").strip()
     date_of_birth = parse_date(request.GET.get("date_of_birth", "").strip())
@@ -483,9 +517,10 @@ def search_explain(request: HttpRequest) -> HttpResponse:
         "first_name": first_name,
         "last_name": last_name,
         "date_of_birth": date_of_birth,
-        "mode": mode,
-        "mode_label": SEARCH_MODES[mode]["label"],
-        "mode_description": SEARCH_MODES[mode]["description"],
+        "mode": ",".join(modes),
+        "mode_label": " + ".join(SEARCH_MODES[m]["label"] for m in modes),
+        "mode_description": " ".join(SEARCH_MODES[m]["description"] for m in modes),
+        "explain_subject": f"Explaining: {' + '.join(modes)}",
         "error": None,
     }
 
@@ -493,7 +528,21 @@ def search_explain(request: HttpRequest) -> HttpResponse:
         context["error"] = "Provide a first_name, last_name, and/or date_of_birth to explain a query."
         return TemplateResponse(request, "records/explain.html", context)
 
-    qs = _queryset_for(mode, first_name, last_name, date_of_birth)
+    qs, kind = _explain_queryset_for(modes, first_name, last_name, date_of_birth)
+
+    if qs is None:
+        context["error"] = (
+            "No query to explain: Levenshtein is a precision filter applied on top of a base mode, "
+            "so with no base mode enabled (and no DOB) search_unified runs no query. "
+            "Enable a base mode such as legacy or prefix."
+        )
+        return TemplateResponse(request, "records/explain.html", context)
+
+    if kind == "trigram":
+        context["explain_subject"] = "Explaining: trigram (KNN) query"
+        if len(modes) > 1:
+            context["explain_subject"] += f" (selected from modes: {', '.join(modes)})"
+
     context["sql"] = str(qs.query)
 
     try:

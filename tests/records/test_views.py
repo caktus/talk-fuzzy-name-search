@@ -621,3 +621,82 @@ class TestTop100Label:
         html = response.content.decode()
         assert "Showing top 100 matches" in html
         assert "100 results" not in html
+
+
+class TestSearchExplain:
+    """B8: the EXPLAIN endpoint explains the query search_unified actually runs."""
+
+    @pytest.fixture(autouse=True)
+    def _seed_data(self):
+        Person.objects.create(first_name="John", last_name="Smith", date_of_birth="1990-05-15")
+        Person.objects.create(first_name="Jonh", last_name="Smyth", date_of_birth="1985-03-20")
+        Person.objects.create(first_name="Alice", last_name="Jones", date_of_birth="1992-11-01")
+
+    def test_explain_single_mode_legacy(self, client):
+        """mode=legacy explains the legacy LIKE query — no Soundex SQL."""
+        response = client.get("/search/explain/?mode=legacy&first_name=John&last_name=Smith")
+        assert response.status_code == 200
+        sql = response.context["sql"]
+        assert sql
+        assert "LIKE UPPER(%John%)" in sql
+        assert "LIKE UPPER(%Smith%)" in sql
+        assert "SOUNDEX" not in sql
+        assert response.context["plan"]
+        assert response.context["error"] is None
+
+    def test_explain_multi_mode_legacy_levenshtein(self, client):
+        """modes=legacy,levenshtein explains the combined query search_unified runs."""
+        response = client.get("/search/explain/?modes=legacy,levenshtein&first_name=John&last_name=Smith")
+        assert response.status_code == 200
+        sql = response.context["sql"]
+        assert "LIKE UPPER(%John%)" in sql
+        assert "levenshtein_less_equal" in sql
+        assert "SOUNDEX" not in sql
+        assert response.context["plan"]
+        assert response.context["mode"] == "legacy,levenshtein"
+        assert response.context["mode_label"] == "Legacy LIKE + Levenshtein"
+        assert response.context["explain_subject"] == "Explaining: legacy + levenshtein"
+
+    def test_explain_trigram_mode_explains_knn_query(self, client):
+        """mode=trigram explains the KNN ORDER BY query search_unified runs."""
+        response = client.get("/search/explain/?mode=trigram&first_name=John&last_name=Smith")
+        assert response.status_code == 200
+        sql = response.context["sql"]
+        assert "<->" in sql
+        assert "ORDER BY" in sql
+        assert response.context["plan"]
+        assert response.context["explain_subject"] == "Explaining: trigram (KNN) query"
+
+    def test_explain_invalid_mode_falls_back_to_prefix(self, client):
+        """An invalid mode name falls back to prefix and the page renders."""
+        response = client.get("/search/explain/?mode=bogus&first_name=John&last_name=Smith")
+        assert response.status_code == 200
+        assert response.context["mode"] == "prefix"
+        assert response.context["mode_label"] == "Exact prefix"
+        assert "LIKE" in response.context["sql"]
+        assert response.context["plan"]
+        assert response.context["error"] is None
+
+    def test_explain_levenshtein_alone_has_no_query(self, client):
+        """Levenshtein without a base mode: no query runs; the page says so (no 500)."""
+        response = client.get("/search/explain/?mode=levenshtein&first_name=John&last_name=Smith")
+        assert response.status_code == 200
+        assert response.context["sql"] is None
+        assert "base mode" in response.context["error"]
+        assert "base mode" in response.content.decode()
+
+    def test_explain_no_input_renders_error(self, client):
+        """No name and no DOB keeps the existing 'Provide a first_name...' error path."""
+        response = client.get("/search/explain/?mode=legacy")
+        assert response.status_code == 200
+        assert "Provide a first_name" in response.context["error"]
+        assert response.context["sql"] is None
+        assert "Provide a first_name" in response.content.decode()
+
+    def test_results_fragment_explain_link_all_modes_encoded(self, client):
+        """The results fragment links explain with ALL enabled modes, URL-encoded."""
+        response = client.get("/search/?modes=legacy,levenshtein&first_name=J%26J", HTTP_HX_REQUEST="true")
+        assert response.status_code == 200
+        html = response.content.decode()
+        assert "modes=legacy%2Clevenshtein" in html
+        assert "first_name=J%26J" in html
