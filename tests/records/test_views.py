@@ -650,13 +650,17 @@ class TestModeSQLTooltipEscaping:
         self._assert_escaped_in_tooltip(response, "x")
 
     def test_phonetic_tooltips_use_real_line_breaks(self, client):
-        """B16: the Soundex/DM checkbox tooltips separate lines with &#10; (a real
-        line break in the tooltip), not a literal backslash-n."""
+        """B16: the Soundex/DM checkbox tooltips separate lines with a real
+        newline (in the rendered attribute), not a literal backslash-n or an
+        &#10; entity. The tooltip strings are built in the view because
+        djlint-reformat collapses literal newlines written in templates and
+        djLint H023 rejects &#10; entities under --profile=django."""
         response = client.get("/search/?modes=soundex,dm&first_name=John&last_name=Smith")
         assert response.status_code == 200
         html = response.content.decode()
-        assert "Phonetic code equality.&#10;Soundex:" in html
-        assert "Slavic/Germanic names.&#10;DM:" in html
+        assert "Phonetic code equality.\nSoundex:" in html
+        assert "Slavic/Germanic names.\nDM:" in html
+        assert "&#10;" not in html
         # No literal two-character backslash-n anywhere in the rendered page.
         assert "\\n" not in html
 

@@ -290,6 +290,34 @@ def _get_phonetic_codes(first_name: str, last_name: str) -> dict:
     return codes
 
 
+def _phonetic_tooltips(first_name: str, last_name: str, codes: dict, mode_sql: dict) -> dict:
+    """Multi-line title tooltips for the soundex/dm checkboxes.
+
+    Built in Python (not the template) because the tooltip line breaks must
+    survive both djlint (a literal newline in a template attribute is
+    collapsed by djlint-reformat, and the &#10; entity that preserves it
+    trips H023 under --profile=django) and browser tooltip rendering. A real
+    newline in the rendered attribute is valid HTML and renders as a line
+    break. Values are auto-escaped by the template engine on render.
+    """
+    tips: dict = {}
+    if mode_sql.get("soundex"):
+        tips["soundex"] = (
+            "Phonetic code equality.\n"
+            f"Soundex: {first_name}={codes.get('soundex_fn', '')}, "
+            f"{last_name}={codes.get('soundex_ln', '')}\n"
+            f"{mode_sql['soundex']}"
+        )
+    if mode_sql.get("dm"):
+        tips["dm"] = (
+            "Phonetic codes for Slavic/Germanic names.\n"
+            f"DM: {first_name}={codes.get('dm_fn', '')}, "
+            f"{last_name}={codes.get('dm_ln', '')}\n"
+            f"{mode_sql['dm']}"
+        )
+    return tips
+
+
 def _search_response(request: HttpRequest) -> HttpResponse:
     """Build the search context and render templates."""
     enabled_modes = _get_enabled_modes(request)
@@ -299,6 +327,8 @@ def _search_response(request: HttpRequest) -> HttpResponse:
     date_of_birth = parse_date(request.GET.get("date_of_birth", "").strip())
 
     context = _run_unified_search(enabled_modes, first_name, last_name, date_of_birth)
+    mode_sql = {m: _mode_sql(m, first_name, last_name, m in enabled_modes) for m in SEARCH_MODES}
+    phonetic_codes = _get_phonetic_codes(first_name, last_name)
     context.update(
         {
             "modes": SEARCH_MODES,
@@ -308,8 +338,9 @@ def _search_response(request: HttpRequest) -> HttpResponse:
             "last_name": last_name,
             "date_of_birth": date_of_birth,
             "total_records": _cached_total_records(),
-            "mode_sql": {m: _mode_sql(m, first_name, last_name, m in enabled_modes) for m in SEARCH_MODES},
-            "phonetic_codes": _get_phonetic_codes(first_name, last_name),
+            "mode_sql": mode_sql,
+            "phonetic_codes": phonetic_codes,
+            "phonetic_tooltips": _phonetic_tooltips(first_name, last_name, phonetic_codes, mode_sql),
         }
     )
 

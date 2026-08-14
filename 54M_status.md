@@ -35,20 +35,21 @@ Each batch is generated, expanded, and inserted immediately. No accumulation of 
 
 ## Verification at 54M
 
-| Metric | Expected | Actual | Status |
-|--------|----------|--------|--------|
-| Row count | 54,000,000 | 54,000,000 | ✅ |
-| Max cluster size | ≤ 80 | 80 | ✅ |
-| Name frequency | Heavy-tailed | 960/948/930/922/917... | ✅ |
-| Typo rate (non-canonical rows in multi-member clusters) | ~0.14–0.20 | 0.1410 | ✅ |
-| Middle name rate | ~0.90 | 0.9001 | ✅ |
-| Nickname rate | ~0.30 | 0.2999 | ✅ |
-| Singleton identities | ~80% | 80.00% | ✅ |
-| Clusters at max size (80) | ~10K | 10,333 | ✅ |
+| Metric                                                  | Expected     | Actual                 | Status |
+| ------------------------------------------------------- | ------------ | ---------------------- | ------ |
+| Row count                                               | 54,000,000   | 54,000,000             | ✅     |
+| Max cluster size                                        | ≤ 80         | 80                     | ✅     |
+| Name frequency                                          | Heavy-tailed | 960/948/930/922/917... | ✅     |
+| Typo rate (non-canonical rows in multi-member clusters) | ~0.14–0.20   | 0.1410                 | ✅     |
+| Middle name rate                                        | ~0.90        | 0.9001                 | ✅     |
+| Nickname rate                                           | ~0.30        | 0.2999                 | ✅     |
+| Singleton identities                                    | ~80%         | 80.00%                 | ✅     |
+| Clusters at max size (80)                               | ~10K         | 10,333                 | ✅     |
 
 ### Typo rate note
 
 The configured `TYPO_RATE = 0.20` means "20% of non-canonical rows in multi-member clusters carry a typo" — it is **not** a claim that 20% of all rows carry typos (the row-level typo rate across the whole table is ~7–9%). The observed rate within multi-member clusters (0.1410) is below 0.20 because:
+
 - Canonical rows (first in each cluster) are never typo'd
 - For a cluster of size N, the typo-able fraction of its rows is `(N-1) / N`
 
@@ -64,13 +65,13 @@ The stage DB has **not** been re-seeded: re-seeding with the new generator produ
 
 ## Timing
 
-| Stage | Time |
-|-------|------|
-| Name pool (10.8M rows drawn from the 690K-pair en_US space — not deduped in that revision) | 1.6s |
-| Generation (36M identities → 53.2M expanded rows) | 725s (12min) |
-| Insertion (53.2M rows in 100K batches) | 5,076s (85min) |
-| Final batches (trim to exact 54M) | ~4s |
-| **Total** | **5,891s (98min)** |
+| Stage                                                                                      | Time               |
+| ------------------------------------------------------------------------------------------ | ------------------ |
+| Name pool (10.8M rows drawn from the 690K-pair en_US space — not deduped in that revision) | 1.6s               |
+| Generation (36M identities → 53.2M expanded rows)                                          | 725s (12min)       |
+| Insertion (53.2M rows in 100K batches)                                                     | 5,076s (85min)     |
+| Final batches (trim to exact 54M)                                                          | ~4s                |
+| **Total**                                                                                  | **5,891s (98min)** |
 
 ## Memory
 
@@ -124,7 +125,7 @@ Limit  (actual time=1.682..3.826 rows=100.00 loops=1)
   Execution Time: 3.842 ms
 ```
 
-PG 14+ **index skip scan**: the composite index *is* usable for a second-column-only prefix condition — the planner skips across `upper(last_name)` values and range-scans `upper(first_name)` within each; with LIMIT 100 it stops after 100 rows.
+PG 14+ **index skip scan**: the composite index _is_ usable for a second-column-only prefix condition — the planner skips across `upper(last_name)` values and range-scans `upper(first_name)` within each; with LIMIT 100 it stops after 100 rows.
 
 The actual UI query (prefix mode in `search_unified`) also sorts by `last_name, first_name`:
 

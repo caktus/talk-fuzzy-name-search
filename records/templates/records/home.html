@@ -3,6 +3,10 @@
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta name="description"
+              content="Fuzzy name search at scale: find people by name and date of birth using prefix, soundex, Daitch-Mokotoff, Levenshtein, and trigram matching over 54M records.">
+        <meta name="keywords"
+              content="fuzzy search, phonetic, soundex, daitch-mokotoff, trigram, levenshtein">
         <title>Fuzzy Name Search at Scale</title>
         <script src="https://cdn.tailwindcss.com"></script>
         <script src="https://unpkg.com/htmx.org@2.0.8"></script>
@@ -21,9 +25,7 @@
             },
         }
         </script>
-        <style>
-        .htmx-request .search-btn { @apply opacity-50 cursor-wait; }
-        </style>
+        <style>.htmx-request .search-btn { @apply opacity-50 cursor-wait; }</style>
     </head>
     <body class="h-full bg-gray-50">
         <div class="min-h-full">
@@ -34,7 +36,8 @@
                             <h1 class="text-xl font-semibold text-gray-900">Fuzzy Name Search at Scale</h1>
                             <p class="text-sm text-gray-500 mt-1">
                                 PostgreSQL + Django strategies for fuzzy name matching
-                                <a href="{% url 'records:help' %}" class="text-primary-600 hover:text-primary-500 ml-1">How it works</a>
+                                <a href="{% url 'records:help' %}"
+                                   class="text-primary-600 hover:text-primary-500 ml-1">How it works</a>
                             </p>
                         </div>
                         <span class="inline-flex items-center rounded-full bg-green-50 px-2 py-1 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">
@@ -53,21 +56,32 @@
                           hx-swap="innerHTML"
                           hx-push-url="true">
                         <input type="hidden" id="modes" name="modes" value="">
-
                         <div class="space-y-3 mb-4 pb-4 border-b border-gray-200">
                             <!-- Exact -->
                             <div class="flex items-start gap-3">
                                 <span class="text-xs font-semibold text-green-700 uppercase tracking-wide mt-0.5 shrink-0 w-16">Exact</span>
                                 <div class="flex flex-wrap gap-x-4 gap-y-1">
                                     <label class="inline-flex items-center gap-1.5 text-sm cursor-pointer group">
-                                        <input type="checkbox" class="mode-checkbox rounded border-gray-300 text-green-600 shadow-sm focus:ring-green-600" value="prefix" {% if "prefix" in enabled_modes %}checked{% endif %}>
+                                        <input type="checkbox"
+                                               class="mode-checkbox rounded border-gray-300 text-green-600 shadow-sm focus:ring-green-600"
+                                               value="prefix"
+                                               {% if "prefix" in enabled_modes %}checked{% endif %}>
                                         <span class="text-gray-700 group-hover:text-gray-900">{{ modes.prefix.label }}</span>
-                                        {% if mode_sql.prefix %}<span class="text-gray-400 cursor-help text-xs" title="{{ mode_sql.prefix }}">(i)</span>{% endif %}
+                                        {% if mode_sql.prefix %}
+                                            <span class="text-gray-400 cursor-help text-xs"
+                                                  title="{{ mode_sql.prefix }}">(i)</span>
+                                        {% endif %}
                                     </label>
                                     <label class="inline-flex items-center gap-1.5 text-sm cursor-pointer group">
-                                        <input type="checkbox" class="mode-checkbox rounded border-gray-300 text-green-600 shadow-sm focus:ring-green-600" value="legacy" {% if "legacy" in enabled_modes %}checked{% endif %}>
+                                        <input type="checkbox"
+                                               class="mode-checkbox rounded border-gray-300 text-green-600 shadow-sm focus:ring-green-600"
+                                               value="legacy"
+                                               {% if "legacy" in enabled_modes %}checked{% endif %}>
                                         <span class="text-gray-700 group-hover:text-gray-900">{{ modes.legacy.label }}</span>
-                                        {% if mode_sql.legacy %}<span class="text-gray-400 cursor-help text-xs" title="{{ mode_sql.legacy }}">(i)</span>{% endif %}
+                                        {% if mode_sql.legacy %}
+                                            <span class="text-gray-400 cursor-help text-xs"
+                                                  title="{{ mode_sql.legacy }}">(i)</span>
+                                        {% endif %}
                                     </label>
                                 </div>
                             </div>
@@ -76,14 +90,26 @@
                                 <span class="text-xs font-semibold text-blue-700 uppercase tracking-wide mt-0.5 shrink-0 w-16">Phonetic</span>
                                 <div class="flex flex-wrap gap-x-4 gap-y-1">
                                     <label class="inline-flex items-center gap-1.5 text-sm cursor-pointer group">
-                                        <input type="checkbox" class="mode-checkbox rounded border-gray-300 text-blue-600 shadow-sm focus:ring-blue-600" value="soundex" {% if "soundex" in enabled_modes %}checked{% endif %}>
+                                        <input type="checkbox"
+                                               class="mode-checkbox rounded border-gray-300 text-blue-600 shadow-sm focus:ring-blue-600"
+                                               value="soundex"
+                                               {% if "soundex" in enabled_modes %}checked{% endif %}>
                                         <span class="text-gray-700 group-hover:text-gray-900">{{ modes.soundex.label }}</span>
-                                        {% if mode_sql.soundex %}<span class="text-gray-400 cursor-help text-xs" title="Phonetic code equality.&#10;Soundex: {{ first_name }}={{ phonetic_codes.soundex_fn }}, {{ last_name }}={{ phonetic_codes.soundex_ln }}&#10;{{ mode_sql.soundex }}">(i)</span>{% endif %}
+                                        {% if mode_sql.soundex %}
+                                            <span class="text-gray-400 cursor-help text-xs"
+                                                  title="{{ phonetic_tooltips.soundex }}">(i)</span>
+                                        {% endif %}
                                     </label>
                                     <label class="inline-flex items-center gap-1.5 text-sm cursor-pointer group">
-                                        <input type="checkbox" class="mode-checkbox rounded border-gray-300 text-blue-600 shadow-sm focus:ring-blue-600" value="dm" {% if "dm" in enabled_modes %}checked{% endif %}>
+                                        <input type="checkbox"
+                                               class="mode-checkbox rounded border-gray-300 text-blue-600 shadow-sm focus:ring-blue-600"
+                                               value="dm"
+                                               {% if "dm" in enabled_modes %}checked{% endif %}>
                                         <span class="text-gray-700 group-hover:text-gray-900">{{ modes.dm.label }}</span>
-                                        {% if mode_sql.dm %}<span class="text-gray-400 cursor-help text-xs" title="Phonetic codes for Slavic/Germanic names.&#10;DM: {{ first_name }}={{ phonetic_codes.dm_fn }}, {{ last_name }}={{ phonetic_codes.dm_ln }}&#10;{{ mode_sql.dm }}">(i)</span>{% endif %}
+                                        {% if mode_sql.dm %}
+                                            <span class="text-gray-400 cursor-help text-xs"
+                                                  title="{{ phonetic_tooltips.dm }}">(i)</span>
+                                        {% endif %}
                                     </label>
                                 </div>
                             </div>
@@ -93,34 +119,51 @@
                                 <div>
                                     <div class="flex flex-wrap gap-x-4 gap-y-1">
                                         <label class="inline-flex items-center gap-1.5 text-sm cursor-pointer group">
-                                            <input type="checkbox" class="mode-checkbox rounded border-gray-300 text-amber-600 shadow-sm focus:ring-amber-600" value="levenshtein" {% if "levenshtein" in enabled_modes and has_base_mode %}checked{% endif %}{% if not has_base_mode %}disabled{% endif %}>
+                                            <input type="checkbox"
+                                                   class="mode-checkbox rounded border-gray-300 text-amber-600 shadow-sm focus:ring-amber-600"
+                                                   value="levenshtein"
+                                                   {% if "levenshtein" in enabled_modes and has_base_mode %}checked{% endif %}
+                                                   {% if not has_base_mode %}disabled{% endif %}>
                                             <span class="text-gray-700 group-hover:text-gray-900">{{ modes.levenshtein.label }}</span>
-                                            {% if mode_sql.levenshtein %}<span class="text-gray-400 cursor-help text-xs" title="{{ mode_sql.levenshtein }}">(i)</span>{% endif %}
+                                            {% if mode_sql.levenshtein %}
+                                                <span class="text-gray-400 cursor-help text-xs"
+                                                      title="{{ mode_sql.levenshtein }}">(i)</span>
+                                            {% endif %}
                                         </label>
                                         <label class="inline-flex items-center gap-1.5 text-sm cursor-pointer group">
-                                            <input type="checkbox" class="mode-checkbox rounded border-gray-300 text-amber-600 shadow-sm focus:ring-amber-600" value="trigram" {% if "trigram" in enabled_modes %}checked{% endif %}>
+                                            <input type="checkbox"
+                                                   class="mode-checkbox rounded border-gray-300 text-amber-600 shadow-sm focus:ring-amber-600"
+                                                   value="trigram"
+                                                   {% if "trigram" in enabled_modes %}checked{% endif %}>
                                             <span class="text-gray-700 group-hover:text-gray-900">{{ modes.trigram.label }}</span>
-                                            {% if mode_sql.trigram %}<span class="text-gray-400 cursor-help text-xs" title="{{ mode_sql.trigram }}">(i)</span>{% endif %}
+                                            {% if mode_sql.trigram %}
+                                                <span class="text-gray-400 cursor-help text-xs"
+                                                      title="{{ mode_sql.trigram }}">(i)</span>
+                                            {% endif %}
                                         </label>
                                     </div>
-                                    <p id="levenshtein-hint" class="mt-1 text-xs text-amber-600{% if has_base_mode %} hidden{% endif %}">
+                                    <p id="levenshtein-hint"
+                                       class="mt-1 text-xs text-amber-600{% if has_base_mode %} hidden{% endif %}">
                                         Refines results of the other modes — enable at least one base mode.
                                     </p>
                                 </div>
                             </div>
                         </div>
-
                         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
                             <div>
                                 <label for="first_name" class="block text-sm font-medium text-gray-700 mb-1">First Name</label>
-                                <input type="text" id="first_name" name="first_name"
+                                <input type="text"
+                                       id="first_name"
+                                       name="first_name"
                                        value="{{ first_name|default:'' }}"
                                        placeholder="e.g., John, Jonh"
                                        class="block w-full rounded-md border-0 py-2 px-3 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-primary-600 sm:text-sm sm:leading-6">
                             </div>
                             <div>
                                 <label for="last_name" class="block text-sm font-medium text-gray-700 mb-1">Last Name</label>
-                                <input type="text" id="last_name" name="last_name"
+                                <input type="text"
+                                       id="last_name"
+                                       name="last_name"
                                        value="{{ last_name|default:'' }}"
                                        placeholder="e.g., Smith, Smyth"
                                        class="block w-full rounded-md border-0 py-2 px-3 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-primary-600 sm:text-sm sm:leading-6">
@@ -128,9 +171,15 @@
                             <div>
                                 <div class="flex items-center justify-between mb-1">
                                     <label for="date_of_birth" class="block text-sm font-medium text-gray-700">Date of Birth</label>
-                                    <button type="button" id="dob-clear-btn" class="dob-clear-link text-xs font-medium text-primary-700 hover:underline{% if not date_of_birth %} hidden{% endif %}">Clear</button>
+                                    <button type="button"
+                                            id="dob-clear-btn"
+                                            class="dob-clear-link text-xs font-medium text-primary-700 hover:underline{% if not date_of_birth %} hidden{% endif %}">
+                                        Clear
+                                    </button>
                                 </div>
-                                <input type="date" id="date_of_birth" name="date_of_birth"
+                                <input type="date"
+                                       id="date_of_birth"
+                                       name="date_of_birth"
                                        value="{{ date_of_birth|date:'Y-m-d'|default:'' }}"
                                        class="block w-full rounded-md border-0 py-2 px-3 text-gray-900 shadow-sm ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-inset focus:ring-primary-600 sm:text-sm sm:leading-6">
                             </div>
@@ -140,9 +189,13 @@
                                     Search
                                 </button>
                                 <div class="htmx-indicator">
-                                    <svg class="animate-spin h-5 w-5 text-primary-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <svg class="animate-spin h-5 w-5 text-primary-600"
+                                         xmlns="http://www.w3.org/2000/svg"
+                                         fill="none"
+                                         viewBox="0 0 24 24">
                                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z">
+                                        </path>
                                     </svg>
                                 </div>
                             </div>

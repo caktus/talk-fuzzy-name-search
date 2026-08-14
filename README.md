@@ -59,18 +59,18 @@ All search runs through one API, `Person.objects.search_unified(modes, first_nam
 
 EXPLAIN (ANALYZE)-verified on the live 54M stage DB (full plans in `54M_status.md`):
 
-| Query | Rows | Time |
-| ----- | ---- | ---- |
-| Trigram KNN, single common name (`ORDER BY last_name <-> 'Smith' LIMIT 100`) | 100 | ~7 ms |
-| Prefix, first name only (bare `LIKE 'JOHN%'` filter) | 100 | ~4 ms |
-| Prefix, first name only (UI query, incl. `ORDER BY` + match annotation) | 100 | ~379 ms |
-| Trigram KNN, dual name (`ORDER BY (last <-> 'Smith'), (first <-> 'John') LIMIT 100`) | 100 | ~14 s |
+| Query                                                                                | Rows | Time    |
+| ------------------------------------------------------------------------------------ | ---- | ------- |
+| Trigram KNN, single common name (`ORDER BY last_name <-> 'Smith' LIMIT 100`)         | 100  | ~7 ms   |
+| Prefix, first name only (bare `LIKE 'JOHN%'` filter)                                 | 100  | ~4 ms   |
+| Prefix, first name only (UI query, incl. `ORDER BY` + match annotation)              | 100  | ~379 ms |
+| Trigram KNN, dual name (`ORDER BY (last <-> 'Smith'), (first <-> 'John') LIMIT 100`) | 100  | ~14 s   |
 
 ## Production Differences
 
-| Aspect           | Demo                                                    | Production system                    |
-| ---------------- | ------------------------------------------------------- | ------------------------------------ |
+| Aspect           | Demo                                                                           | Production system                          |
+| ---------------- | ------------------------------------------------------------------------------ | ------------------------------------------ |
 | Phonetic storage | On-the-fly `SOUNDEX()`/`DAITCH_MOKOTOFF()` expressions with functional indexes | On-the-fly `daitch_mokotoff()` expressions |
-| Algorithms       | Prefix, legacy LIKE, Soundex + DM, trigram KNN, Levenshtein filter | DM only                    |
-| Search methods   | Unified ORM search (`search_unified`, 100-row page)     | Single RawSQL query                  |
-| Scale            | 54M rows (stage DB)                                     | 54M+ rows                            |
+| Algorithms       | Prefix, legacy LIKE, Soundex + DM, trigram KNN, Levenshtein filter             | DM only                                    |
+| Search methods   | Unified ORM search (`search_unified`, 100-row page)                            | Single RawSQL query                        |
+| Scale            | 54M rows (stage DB)                                                            | 54M+ rows                                  |

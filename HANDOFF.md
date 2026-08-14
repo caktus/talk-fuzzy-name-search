@@ -9,6 +9,7 @@ All review fixes from `RECS-2026-08-14` are implemented and **committed on this 
 ### 1. Database: 54M person records
 
 `records/management/commands/seed_data.py` generates realistic, deterministic person records with:
+
 - Name pool: distinct (first, last) pairs drawn without replacement from the 690K-pair Faker en_US space (no duplicates)
 - Name frequency: Zipf(a=1.1) sampling of pool rows -- the sole source of the heavy tail
 - Cluster model: 80% singleton identities, 20% heavy-tailed clusters (Pareto(1.5), clipped to 2–80)
@@ -40,16 +41,17 @@ Verified distributions (`54M_status.md`):
 
 Replaced tab-based search with **checkbox-based mode selection**. Each algorithm is independently toggleable:
 
-| Mode | Description | Default |
-|------|-------------|---------|
-| Exact prefix | B-tree `istartswith` | ✅ checked |
-| Soundex | Phonetic code match | ❌ |
-| Levenshtein | Edit distance ≤ 2 (precision filter) | ❌ |
-| Daitch-Mokotoff | Phonetic codes (Slavic/Germanic) | ❌ |
-| Trigram | pg_trgm similarity | ❌ |
-| Legacy LIKE | Unindexed substring | ❌ |
+| Mode            | Description                          | Default    |
+| --------------- | ------------------------------------ | ---------- |
+| Exact prefix    | B-tree `istartswith`                 | ✅ checked |
+| Soundex         | Phonetic code match                  | ❌         |
+| Levenshtein     | Edit distance ≤ 2 (precision filter) | ❌         |
+| Daitch-Mokotoff | Phonetic codes (Slavic/Germanic)     | ❌         |
+| Trigram         | pg_trgm similarity                   | ❌         |
+| Legacy LIKE     | Unindexed substring                  | ❌         |
 
 **Key behaviors:**
+
 - Single SQL query with Q objects (OR across modes, AND within mode for both names)
 - Trigram via separate query merged in Python (ORDER BY `<->` can't be OR-ed)
 - Levenshtein as precision filter (AND) applied on top of other modes, not an independent OR
@@ -67,6 +69,7 @@ Replaced tab-based search with **checkbox-based mode selection**. Each algorithm
 ### 4. Tests (`tests/`)
 
 **179 tests passing** across:
+
 - `tests/records/test_views.py` (82): unified search modes, DOB filtering, Levenshtein as filter, match source annotation, badges, EXPLAIN endpoint, tooltips, HTML rendering
 - `tests/records/test_seed_data.py` (45): name pool, Zipf sampling, typo injection, cluster expansion, bulk insert, edit distance
 - `tests/records/test_models.py` (38): model creation, search methods, DOB filtering, hero typo case
@@ -90,19 +93,19 @@ Replaced tab-based search with **checkbox-based mode selection**. Each algorithm
 
 ## File Map
 
-| File | Purpose |
-|------|---------|
-| `records/models.py` | Person model, QuerySet search methods, functional indexes |
-| `records/views.py` | Unified search view, match_source annotation, mode config, help page |
-| `records/expressions.py` | ORM wrappers for Levenshtein, Soundex, DM |
-| `records/phonetics.py` | NICKNAME_MAP, resolve_variants() |
-| `records/management/commands/seed_data.py` | Polars-based data generation |
-| `records/templates/records/home.html` | Search form with checkboxes |
-| `records/templates/records/_search_results.html` | Results table with match badges |
-| `records/templates/records/help.html` | Help page describing search modes |
-| `records/templates/records/explain.html` | EXPLAIN ANALYZE query plan viewer |
-| `test_cases.txt` | Sample search cases from 54M seed |
-| `54M_status.md` | Detailed 54M verification results |
+| File                                             | Purpose                                                              |
+| ------------------------------------------------ | -------------------------------------------------------------------- |
+| `records/models.py`                              | Person model, QuerySet search methods, functional indexes            |
+| `records/views.py`                               | Unified search view, match_source annotation, mode config, help page |
+| `records/expressions.py`                         | ORM wrappers for Levenshtein, Soundex, DM                            |
+| `records/phonetics.py`                           | NICKNAME_MAP, resolve_variants()                                     |
+| `records/management/commands/seed_data.py`       | Polars-based data generation                                         |
+| `records/templates/records/home.html`            | Search form with checkboxes                                          |
+| `records/templates/records/_search_results.html` | Results table with match badges                                      |
+| `records/templates/records/help.html`            | Help page describing search modes                                    |
+| `records/templates/records/explain.html`         | EXPLAIN ANALYZE query plan viewer                                    |
+| `test_cases.txt`                                 | Sample search cases from 54M seed                                    |
+| `54M_status.md`                                  | Detailed 54M verification results                                    |
 
 ## Environment
 
@@ -147,7 +150,7 @@ Remaining (deliberately open):
 
 1. **CI workflow** (RECS P2-18): run the suite against a small seed (`seed_data --count 10000` in a service container with `fuzzystrmatch`/`pg_trgm`) — never re-seed 54M in CI.
 2. **Deliberate re-seed** (B3 follow-up): re-seed the stage DB with the rewritten generator and re-measure distributions; until then `54M_status.md` remains the provenance of record.
-3. **Nickname tolerance decision** (P1-12): currently documented as *not* supported by the unified search; fixing it (variant-aware filtering) is a product decision.
+3. **Nickname tolerance decision** (P1-12): currently documented as _not_ supported by the unified search; fixing it (variant-aware filtering) is a product decision.
 4. **Talk prep**: rehearse against the live UI; use the B17 EXPLAIN plans in `54M_status.md` as plan-walkthrough material; follow the RECS talk-script suggestions (empirical distribution story, honest typo-rate wording).
 
 ## Notes
