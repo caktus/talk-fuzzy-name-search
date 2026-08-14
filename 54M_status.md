@@ -82,7 +82,7 @@ The stage DB has **not** been re-seeded: re-seeding with the new generator produ
 
 ## Tests
 
-**64/64 passing** across the full test suite (`tests/records/`).
+**179 passing** across the full test suite (`tests/`).
 
 ## Seed
 

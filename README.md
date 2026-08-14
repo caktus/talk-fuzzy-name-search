@@ -1,6 +1,6 @@
-# Fuzzy Name Search at 50M Scale -- Demo
+# Fuzzy Name Search at 54M Scale -- Demo
 
-Django + PostgreSQL strategies for fuzzy name matching across 50 million records.
+Django + PostgreSQL strategies for fuzzy name matching across 54 million records.
 
 ## Quick Start
 
@@ -45,33 +45,32 @@ not part of this flow (see `scripts/legacy/README.md`).
 
 ## What's Inside
 
-- **`records/`** -- Django app with `Person` model, phonetic search QuerySets, and web views
-- **`demo.py`** -- Marimo notebook for the 45-minute conference presentation
+- **`records/`** -- Django app with `Person` model, the `search_unified()` search API, and web views
+- **`demo.py`** -- Marimo notebook for the 45-minute conference presentation (drives the same `search_unified()` API as the web UI)
 - **`scripts/legacy/`** -- Pre-rewrite CSV data pipeline (superseded by `manage.py seed_data`)
-- **`data/people_50m.csv`** -- 50M fake person records (2.6GB)
-- **`tests/`** -- Characterization tests (29 passing)
+- **`54M_status.md`** -- Verification results and EXPLAIN plans for the 54M stage dataset
+- **`tests/`** -- Test suite (179 passing)
 
 ## Architecture
 
-Dual-layer indexing and filtering pipeline:
+All search runs through one API, `Person.objects.search_unified(modes, first_name, last_name, date_of_birth)`, with independently toggleable modes -- exact prefix, legacy LIKE, Soundex, Daitch-Mokotoff, and trigram -- OR-ed into a single query, plus Levenshtein (edit distance <= 2) applied as a precision filter (AND) on top of the base modes. Phonetic matching stores no pre-computed tokens: PostgreSQL's `SOUNDEX()` and `DAITCH_MOKOTOFF()` are applied directly in SQL via functional indexes (B-tree for Soundex equality, GIN for Daitch-Mokotoff array overlap), prefix mode rides a `text_pattern_ops` B-tree, and trigram mode uses a pg_trgm GiST KNN scan (`<->` distance ordering). Each search returns one 100-row page, and every row is annotated with the mode(s) that matched it, which the UI renders as badges.
 
-1. **Phonetic Matching** (Soundex + Daitch-Mokotoff) -- broad filter via GIN indexes on stored phonetic token arrays
-2. **Levenshtein Filtering** -- precision filter with early-exit optimization (`levenshtein_less_equal`)
+## Performance at 54M Scale
 
-## Performance at 50M Scale
+EXPLAIN (ANALYZE)-verified on the live 54M stage DB (full plans in `54M_status.md`):
 
-| Search        | Query               | Results | Time   |
-| ------------- | ------------------- | ------- | ------ |
-| Phonetic      | "John Smith"        | 10      | 24ms   |
-| Phonetic      | "Jonh Smyth" (typo) | 10      | 5ms    |
-| Legacy (LIKE) | "Jonh Smyth" (typo) | 0       | 2800ms |
-| LIKE          | "Smith" (exact)     | 10      | 1ms    |
+| Query | Rows | Time |
+| ----- | ---- | ---- |
+| Trigram KNN, single common name (`ORDER BY last_name <-> 'Smith' LIMIT 100`) | 100 | ~7 ms |
+| Prefix, first name only (bare `LIKE 'JOHN%'` filter) | 100 | ~4 ms |
+| Prefix, first name only (UI query, incl. `ORDER BY` + match annotation) | 100 | ~379 ms |
+| Trigram KNN, dual name (`ORDER BY (last <-> 'Smith'), (first <-> 'John') LIMIT 100`) | 100 | ~14 s |
 
 ## Production Differences
 
-| Aspect           | Demo                           | Production system                          |
-| ---------------- | ------------------------------ | ------------------------------------------ |
-| Phonetic storage | Stored ArrayField columns      | On-the-fly `daitch_mokotoff()` expressions |
-| Algorithms       | Soundex + DM                   | DM only                                    |
-| Search methods   | Trigram (KNN) + Phonetic (ORM) | Single RawSQL query                        |
-| Scale            | 50M rows                       | 54M+ rows                                  |
+| Aspect           | Demo                                                    | Production system                    |
+| ---------------- | ------------------------------------------------------- | ------------------------------------ |
+| Phonetic storage | On-the-fly `SOUNDEX()`/`DAITCH_MOKOTOFF()` expressions with functional indexes | On-the-fly `daitch_mokotoff()` expressions |
+| Algorithms       | Prefix, legacy LIKE, Soundex + DM, trigram KNN, Levenshtein filter | DM only                    |
+| Search methods   | Unified ORM search (`search_unified`, 100-row page)     | Single RawSQL query                  |
+| Scale            | 54M rows (stage DB)                                     | 54M+ rows                            |

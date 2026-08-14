@@ -17,7 +17,7 @@ from django.utils.dateparse import parse_date
 
 from .models import Person, apply_levenshtein_filter, build_unified_filter
 
-# Person.objects.count() is a full-table COUNT(*) -- on the 50M-row demo
+# Person.objects.count() is a full-table COUNT(*) -- on the 54M-row demo
 # table that's a ~600ms sequential-ish scan, and it's on every page load.
 # The exact number doesn't matter for the UI, so cache it via Django's
 # cache framework for a while instead of re-counting on every request.
