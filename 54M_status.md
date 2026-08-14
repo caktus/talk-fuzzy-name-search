@@ -34,8 +34,8 @@ Each batch is generated, expanded, and inserted immediately. No accumulation of 
 |--------|----------|--------|--------|
 | Row count | 54,000,000 | 54,000,000 | ✅ |
 | Max cluster size | ≤ 80 | 80 | ✅ |
-| Name frequency | Heavy-tailed (Dirichlet) | 960/948/930/922/917... | ✅ |
-| Typo rate (multi-member clusters) | ~0.14–0.20 | 0.1410 | ✅ |
+| Name frequency | Heavy-tailed | 960/948/930/922/917... | ✅ |
+| Typo rate (non-canonical rows in multi-member clusters) | ~0.14–0.20 | 0.1410 | ✅ |
 | Middle name rate | ~0.90 | 0.9001 | ✅ |
 | Nickname rate | ~0.30 | 0.2999 | ✅ |
 | Singleton identities | ~80% | 80.00% | ✅ |
@@ -43,18 +43,25 @@ Each batch is generated, expanded, and inserted immediately. No accumulation of 
 
 ### Typo rate note
 
-The observed typo rate (0.1410) is lower than the configured `TYPO_RATE = 0.20` because:
+The configured `TYPO_RATE = 0.20` means "20% of non-canonical rows in multi-member clusters carry a typo" — it is **not** a claim that 20% of all rows carry typos (the row-level typo rate across the whole table is ~7–9%). The observed rate within multi-member clusters (0.1410) is below 0.20 because:
 - Canonical rows (first in each cluster) are never typo'd
-- 80% of identities are singletons (cluster_size=1), which have zero typos
-- For a cluster of size N, effective rate = `TYPO_RATE × (N-1) / N`
+- For a cluster of size N, the typo-able fraction of its rows is `(N-1) / N`
 
-This is correct behavior. The HANDOFF.md expected ~0.20 as a rough check.
+This is correct behavior of the generator.
+
+## Provenance: honest-generator note (2026-08-14)
+
+The 54M dataset on disk was produced by an **earlier revision** of `records/management/commands/seed_data.py`. Its actual distribution is the empirical data recorded in this file: top-pair frequencies 960/948/930/922/917, 3.72M distinct name pairs, 0.1410 typo rate within multi-member clusters, 80% singleton identities, max cluster size 80. That revision's "Dirichlet heavy tail" step was not a real skew source: it sampled `Dirichlet(1, …, 1)` (uniform over the simplex), and its pool drew first and last names independently, so the 10.8M-row pool contained at most 690,000 distinct pairs (the faker 40.x en_US space) and was heavily duplicated. Its reproducibility was also only partial: DOBs were derived from `date.today()` at run time and person_ids from unseeded `uuid.uuid4()`, so a re-run would not reproduce this dataset.
+
+The generator has since been rewritten to be honest and deterministic (RECS-2026-08-14, B3, option b): the pool is now built from **distinct** pairs (drawn without replacement from the 690K-pair en_US space, capped at that size), name-pair frequencies come from explicit **Zipf(a=1.1)** sampling of pool rows, DOBs derive from a **`--as-of`** reference date, and person_ids are drawn from the seeded RNG. A given (seed, count, as-of) triple now reproduces the dataset exactly, and the distribution model is stated in the command's docstring.
+
+The stage DB has **not** been re-seeded: re-seeding with the new generator produces a different — better-documented — distribution than the one on disk, and the measured numbers in this file remain the provenance of record for the current stage data. Re-seeding and re-measuring is a separate, deliberate step.
 
 ## Timing
 
 | Stage | Time |
 |-------|------|
-| Name pool (10.8M unique names) | 1.6s |
+| Name pool (10.8M rows drawn from the 690K-pair en_US space — not deduped in that revision) | 1.6s |
 | Generation (36M identities → 53.2M expanded rows) | 725s (12min) |
 | Insertion (53.2M rows in 100K batches) | 5,076s (85min) |
 | Final batches (trim to exact 54M) | ~4s |
@@ -72,7 +79,7 @@ This is correct behavior. The HANDOFF.md expected ~0.20 as a rough check.
 
 ## Seed
 
-Run used `--seed 42` for reproducibility.
+Run used `--seed 42`. Note: with that earlier generator revision this run was **not** byte-for-byte reproducible — DOBs depended on the run date and person_ids came from unseeded `uuid4()`. The rewritten generator (see Provenance above) fixes this via `--as-of` and seeded person_id derivation.
 
 ## Remaining HANDOFF Items
 

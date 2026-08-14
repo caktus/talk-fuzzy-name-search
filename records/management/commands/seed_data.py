@@ -2,31 +2,48 @@
 
 Usage:
     python manage.py seed_data --count 100000 --flush
+    python manage.py seed_data --count 100000 --flush --seed 42 --as-of 2026-01-01
 
 --count is the target number of final rows (after cluster expansion).
 
-Generation approach:
-    1. Build a name pool (20% of --count) from Faker's en_US provider
-    2. Dirichlet-distribution sampling produces realistic name frequency skew
-    3. Identities generated in batches until expanded row total reaches --count
-    4. Each identity gets one DOB; cluster variants share that DOB
-    5. Vectorized generation via Polars DataFrames
-    6. Bulk-insert in batches of 100,000
+Distribution model (rewritten 2026-08-14 after RECS-2026-08-14 B3 — honest + deterministic):
+    1. Name pool: exactly pool_size DISTINCT (first_name, last_name) pairs, drawn
+       uniformly without replacement from Faker's en_US cartesian space
+       (690 first x 1,000 last = 690,000 possible pairs; the pool is capped at
+       the space size when --count is large).
+    2. Name frequency: pool rows are sampled with Zipf(a = ZIPF_ALPHA = 1.1), a
+       genuine heavy tail. Zipf index i (1-based) maps to pool row
+       (i - 1) % len(pool); indices past the pool size wrap modulo, which keeps
+       every pair reachable. This step is the sole source of name-frequency skew.
+    3. Identities generated in batches until expanded row total reaches --count.
+       Each identity gets one DOB; cluster variants share that DOB and person_id.
+       Cluster size: 80% singleton, 20% Pareto(1.5), clipped to [2, 80].
+    4. Vectorized generation via Polars DataFrames.
+    5. Bulk-insert in batches of 100,000.
+
+Reproducibility:
+    The (seed, count, as-of) triple fully determines the generated rows. DOBs
+    derive from --as-of (default: date.today() at run time), and person_ids are
+    drawn from the seeded RNG (two 64-bit draws per identity, combined into one
+    128-bit UUID). Re-running with the same triple reproduces the same names,
+    DOBs, and person_ids.
 
 Variation injection:
     ~30% of identities: use a nickname as the stored first_name
     ~90% of identities: include a middle name (mix of full names and initials)
-    ~20% of expanded rows: inject a single random typo into first_name or last_name
+    ~20% of non-canonical rows in multi-member clusters: inject a single random
+    typo into first_name or last_name (the first row of each cluster is the
+    canonical row and is never typo'd)
 """
 
 import string
 import time
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import numpy as np
 import polars as pl
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from faker import Faker
 
 from records.models import Person
@@ -34,14 +51,18 @@ from records.phonetics import NICKNAME_MAP
 
 # Generation rates
 NAME_POOL_FRACTION = 0.2  # pool size = 20% of --count
+ZIPF_ALPHA = 1.1  # Zipf skew for name-pair frequencies (1 < a < 2: heavy tail)
 NICKNAME_RATE = 0.30
 MIDDLE_NAME_RATE = 0.90
-TYPO_RATE = 0.20
+TYPO_RATE = 0.20  # of non-canonical rows in multi-member clusters
 BATCH_SIZE = 100_000
 
 
 class Command(BaseCommand):
-    help = "Seed the database with realistic person records"
+    help = (
+        "Seed the database with realistic person records. Names: deduped pool sampled "
+        "with a Zipf(a=1.1) heavy tail. Fully reproducible from the (seed, count, as-of) triple."
+    )
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -61,19 +82,37 @@ class Command(BaseCommand):
             default=42,
             help="Random seed for reproducibility (default: 42)",
         )
+        parser.add_argument(
+            "--as-of",
+            type=str,
+            default=None,
+            help=(
+                "Reference date (YYYY-MM-DD) that DOB generation treats as 'today' "
+                "(default: the actual current date). Pin this together with --seed "
+                "for exact reproducibility."
+            ),
+        )
 
     def handle(self, *args, **options):
         count = options["count"]
         flush = options["flush"]
         rng_seed = options["seed"]
 
+        if options["as_of"] is None:
+            as_of = date.today()
+        else:
+            try:
+                as_of = datetime.strptime(options["as_of"], "%Y-%m-%d").date()
+            except ValueError:
+                raise CommandError(f"Invalid --as-of date {options['as_of']!r}; expected YYYY-MM-DD") from None
+
         if flush:
             deleted, _ = Person.objects.all().delete()
             self.stdout.write(f"Flushed {deleted:,} existing records")
 
-        self.stdout.write(f"Generating {count:,} person records (seed={rng_seed})...")
+        self.stdout.write(f"Generating {count:,} person records (seed={rng_seed}, as-of={as_of})...")
         start = time.perf_counter()
-        self._seed(count, rng_seed)
+        self._seed(count, rng_seed, as_of)
         elapsed = time.perf_counter() - start
         total = Person.objects.count()
         self.stdout.write(self.style.SUCCESS(f"Seeded {total:,} records in {elapsed:.1f}s"))
@@ -83,12 +122,15 @@ class Command(BaseCommand):
     # Generation
     # ------------------------------------------------------------------
 
-    def _seed(self, count: int, rng_seed: int) -> None:
+    def _seed(self, count: int, rng_seed: int, as_of: date) -> None:
         """Generate and bulk-create person records using Polars.
 
         --count is the target number of *final rows* (after cluster expansion).
         Identities are generated in batches; each batch is expanded and inserted
         immediately to bound memory usage (no accumulation of all rows).
+
+        All date logic derives from as_of (the --as-of reference date), so a
+        given (seed, count, as_of) triple reproduces the same rows.
         """
         rng = np.random.default_rng(rng_seed)
         fake = Faker("en_US")
@@ -96,11 +138,11 @@ class Command(BaseCommand):
 
         pool_size = max(int(count * NAME_POOL_FRACTION), 100)
 
-        # --- 1. Build name pool ---
-        self.stdout.write(f"  Building name pool ({pool_size:,} unique names)...")
+        # --- 1. Build name pool (distinct pairs) ---
+        self.stdout.write(f"  Building name pool (target {pool_size:,} unique pairs)...")
         t0 = time.perf_counter()
         name_pool = self._build_name_pool(pool_size, fake, rng)
-        self.stdout.write(f"    done in {time.perf_counter() - t0:.1f}s")
+        self.stdout.write(f"    done in {time.perf_counter() - t0:.1f}s ({len(name_pool):,} unique pairs)")
 
         # --- 2-4. Generate + insert in streaming batches ---
         AVG_CLUSTER_SIZE = 1.5  # rough estimate (80% size=1, 20% Pareto)
@@ -117,8 +159,8 @@ class Command(BaseCommand):
                 f"  Batch {batch_num}: sampling {batch_identities:,} identities (need ~{remaining:,} more rows)"
             )
             t0 = time.perf_counter()
-            sampled = self._dirichlet_sample(name_pool, batch_identities, rng)
-            identities = self._assign_attributes(sampled, batch_identities, rng, fake)
+            sampled = self._zipf_sample(name_pool, batch_identities, rng)
+            identities = self._assign_attributes(sampled, batch_identities, rng, fake, as_of)
             batch_rows = self._expand_clusters(identities, rng)
             self.stdout.write(f"    generate: {time.perf_counter() - t0:.1f}s ({len(batch_rows):,} rows)")
 
@@ -138,43 +180,72 @@ class Command(BaseCommand):
                 self.stdout.write(f"  Trimmed to exact target: {count:,} rows")
 
     def _build_name_pool(self, pool_size: int, fake: Faker, rng: np.random.Generator) -> pl.DataFrame:
-        """Generate a pool of unique first/last name combinations."""
+        """Build a pool of DISTINCT first/last name pairs.
+
+        Pairs are drawn uniformly *without replacement* from Faker's en_US
+        cartesian space (every first-name x last-name combination), so every
+        row of the pool is a unique pair. If pool_size exceeds the space size
+        (690 x 1,000 = 690,000 for faker 40.x), the pool is capped at the
+        space size and a note is printed.
+        """
         from faker.providers.person.en_US import Provider as en_US
 
         all_first_names = [n.upper() for n in en_US.first_names.keys()]
         all_last_names = [n.upper() for n in en_US.last_names.keys()]
+        space_size = len(all_first_names) * len(all_last_names)
 
-        first_names = rng.choice(all_first_names, size=pool_size)
-        last_names_arr = rng.choice(all_last_names, size=pool_size)
+        if pool_size > space_size:
+            self.stdout.write(
+                f"  Note: requested pool of {pool_size:,} exceeds the {space_size:,} distinct pairs in "
+                f"the en_US name space; capping the pool at {space_size:,}."
+            )
+            pool_size = space_size
+
+        flat = rng.choice(space_size, size=pool_size, replace=False)
+        first_names = np.array(all_first_names)[flat // len(all_last_names)]
+        last_names = np.array(all_last_names)[flat % len(all_last_names)]
 
         return pl.DataFrame(
             {
                 "first_name": first_names,
-                "last_name": last_names_arr,
+                "last_name": last_names,
             }
         )
 
     @staticmethod
-    def _dirichlet_sample(pool: pl.DataFrame, sample_size: int, rng: np.random.Generator) -> pl.DataFrame:
-        """Sample from pool using Dirichlet distribution for realistic name frequency."""
-        dist = rng.dirichlet(np.ones(len(pool)))
-        sampled_indices = rng.choice(len(pool), sample_size, replace=True, p=dist)
-        sampled_indices_df = pl.DataFrame({"pool_idx": sampled_indices})
-        return pool.with_row_index("pool_idx").join(sampled_indices_df, on="pool_idx", how="inner").drop("pool_idx")
+    def _zipf_sample(pool: pl.DataFrame, sample_size: int, rng: np.random.Generator) -> pl.DataFrame:
+        """Sample pool rows with Zipf(a=ZIPF_ALPHA) indices for a heavy-tailed name frequency.
 
-    def _assign_attributes(self, df: pl.DataFrame, count: int, rng: np.random.Generator, fake: Faker) -> pl.DataFrame:
-        """Assign DOB, person_id, cluster_size, middle_name, nicknames per identity."""
+        Zipf index i (1-based) maps to pool row (i - 1) % len(pool). Indices
+        past the pool size wrap modulo, so every pool row stays reachable
+        while draws concentrate on the first pool rows.
+        """
+        indices = (rng.zipf(ZIPF_ALPHA, size=sample_size) - 1) % len(pool)
+        return pool[indices]
+
+    def _assign_attributes(
+        self, df: pl.DataFrame, count: int, rng: np.random.Generator, fake: Faker, as_of: date
+    ) -> pl.DataFrame:
+        """Assign DOB, person_id, cluster_size, middle_name, nicknames per identity.
+
+        DOBs are drawn relative to as_of (the --as-of reference date), so the
+        same (seed, count, as_of) triple reproduces the same DOBs. person_ids
+        are drawn from the seeded RNG — two 64-bit draws per identity combined
+        into one 128-bit UUID — and are shared by every row of the identity's
+        cluster.
+        """
         import uuid
 
         n = len(df)
 
-        # DOB: random date between 18-85 years ago (100% of records)
+        # DOB: random date between 18-85 years before as_of (100% of records)
         base_days = rng.integers(18 * 365, 85 * 365, size=n)
-        today = date.today()
-        dobs = [today - timedelta(days=int(d)) for d in base_days]
+        dobs = [as_of - timedelta(days=int(d)) for d in base_days]
 
-        # person_id: one UUID per identity
-        person_ids = [uuid.uuid4() for _ in range(n)]
+        # person_id: one deterministic UUID per identity, drawn from the seeded RNG
+        hi = rng.integers(0, 2**64, size=n, dtype=np.uint64)
+        lo = rng.integers(0, 2**64, size=n, dtype=np.uint64)
+        person_ids = [uuid.UUID(int=int(hi_val) << 64 | int(lo_val)) for hi_val, lo_val in zip(hi, lo)]
 
         # Cluster size: heavy-tailed (most 1, some 20-50+)
         # Use a Pareto-like distribution: 80% get 1, 15% get 2-10, 5% get 11-50+
