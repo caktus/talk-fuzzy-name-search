@@ -339,7 +339,10 @@ def search(request: HttpRequest) -> HttpResponse:
 
 def help_page(request: HttpRequest) -> HttpResponse:
     """Help page describing search modes."""
-    # ?refresh=1 bypasses the cache for fresh examples
+    # ?refresh=1 bypasses the cache for fresh examples. With cache.add
+    # (see _get_help_examples), two simultaneous refreshes both compute
+    # but only one wins the add — the other's result is discarded, which
+    # is fine for a human-paced button.
     if request.GET.get("refresh"):
         from django.core.cache import cache
 
@@ -355,7 +358,13 @@ def _get_help_examples() -> dict:
     if examples:
         return examples
     examples = _generate_help_examples()
-    cache.set("help_examples", examples, 3600)  # Cache for 1 hour
+    # cache.add, not cache.set (B5 stampede protection): if a concurrent
+    # cold-cache request populated the key first, serve that winner's
+    # result instead of our duplicate computation.
+    if not cache.add("help_examples", examples, 3600):  # Cache for 1 hour
+        winner = cache.get("help_examples")
+        if winner:
+            return winner
     return examples
 
 
@@ -365,17 +374,55 @@ def _generate_help_examples() -> dict:
 
     from django.db import connection
 
-    # Pick a random DOB that gives us 5-20 results
-    dob = None
+    # Pick a random DOB that gives us 5-20 results, without sorting the
+    # whole table (B5). TABLESAMPLE SYSTEM takes a PERCENT (0-100), so
+    # 0.01 = 0.01% of pages: on the 54M-row demo table (~720K pages) that
+    # is ~5,400 rows / ~700 distinct DOBs in ~2ms — O(sample), not the
+    # old O(n log n) ORDER BY RANDOM() full-table sort. A few attempts
+    # top up the candidate list; only when the table is too small for
+    # the page sample to yield 100 distinct DOBs (dev/tests) do we fall
+    # back to ORDER BY RANDOM(), which is cheap at that size.
+    sampled_dobs: list[date] = []
+    seen_dobs = set()
     with connection.cursor() as c:
-        c.execute("SELECT date_of_birth FROM records_person ORDER BY RANDOM() LIMIT 100")
-        for row in c.fetchall():
-            d = row[0]
-            c.execute("SELECT count(*) FROM records_person WHERE date_of_birth = %s", [d])
-            count = c.fetchone()[0]
-            if 5 <= count <= 20:
-                dob = d
+        for _attempt in range(3):
+            c.execute("SELECT date_of_birth FROM records_person TABLESAMPLE SYSTEM (0.01) LIMIT 1000")
+            for (d,) in c.fetchall():
+                if d not in seen_dobs:
+                    seen_dobs.add(d)
+                    sampled_dobs.append(d)
+                if len(sampled_dobs) >= 100:
+                    break
+            if len(sampled_dobs) >= 100:
                 break
+        if len(sampled_dobs) < 100:
+            # Tiny table: the page sample yielded too few DOBs, and a
+            # full-table RANDOM() sort is cheap when the table is this
+            # small (0.01% of its pages is under one page).
+            c.execute("SELECT date_of_birth FROM records_person ORDER BY RANDOM() LIMIT 100")
+            for (d,) in c.fetchall():
+                if d not in seen_dobs:
+                    seen_dobs.add(d)
+                    sampled_dobs.append(d)
+
+        # Count every candidate DOB in one aggregate instead of one
+        # COUNT(*) per DOB: a single round trip with a <=100-date IN list.
+        dob = None
+        if sampled_dobs:
+            placeholders = ", ".join(["%s"] * len(sampled_dobs))
+            c.execute(
+                "SELECT date_of_birth, COUNT(*) FROM records_person "
+                f"WHERE date_of_birth IN ({placeholders}) GROUP BY date_of_birth",
+                sampled_dobs,
+            )
+            counts = {row[0]: row[1] for row in c.fetchall()}
+            # First sampled DOB (in sample order) with a manageable count
+            # — the same selection rule as before.
+            for d in sampled_dobs:
+                count = counts.get(d)
+                if 5 <= count <= 20:
+                    dob = d
+                    break
 
     if not dob:
         dob = date(1990, 1, 1)

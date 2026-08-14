@@ -7,6 +7,7 @@ import re
 from datetime import date
 
 import pytest
+from django.core.cache import cache
 
 from records.models import Person
 
@@ -490,6 +491,95 @@ class TestHelpPage:
         # Second request with refresh=1 should still work
         response = client.get("/help/?refresh=1")
         assert response.status_code == 200
+
+
+class TestHelpExamples:
+    """B5: help examples use cheap DOB sampling, a single aggregate, and a
+    stampede-proof cache (cache.add instead of cache.set)."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_examples_cache(self):
+        cache.clear()
+        yield
+        cache.clear()
+
+    @staticmethod
+    def _seed_example_dobs():
+        """3 distinct DOBs, varying counts: A has 5 people, B has 2, C has 1.
+
+        Only A is inside the 5-20 window _generate_help_examples() picks from.
+        """
+        for i in range(5):
+            Person.objects.create(first_name=f"Ann{i}", last_name="Alfa", date_of_birth="1990-05-01")
+        for i in range(2):
+            Person.objects.create(first_name=f"Bob{i}", last_name="Beta", date_of_birth="1990-06-02")
+        Person.objects.create(first_name="Cy", last_name="Gamma", date_of_birth="1990-07-03")
+
+    def test_help_page_examples_structure(self, client):
+        """Help page returns 200 with a dob and the 7 search-mode groups,
+        built from real names of the chosen DOB."""
+        self._seed_example_dobs()
+        response = client.get("/help/")
+        assert response.status_code == 200
+        examples = response.context["examples"]
+        assert examples["dob"] == "1990-05-01"
+        assert len(examples["groups"]) == 7
+        for group in examples["groups"]:
+            assert {"label", "color", "mode", "fn", "ln", "desc"} <= set(group)
+        # The Exact group truncates the base name from a real DOB-A person
+        # (last names are all "Alfa"), proving names come from that DOB.
+        assert examples["groups"][0]["ln"] == "Alf"
+
+    def test_example_dob_chosen_by_aggregate_count(self, client):
+        """The 5-person DOB wins over the 2-person and 1-person DOBs: the
+        selection runs on the single GROUP BY counts, not mere presence."""
+        self._seed_example_dobs()
+        response = client.get("/help/")
+        examples = response.context["examples"]
+        assert examples["dob"] == "1990-05-01"
+        assert examples["groups"]  # real names found for the chosen DOB
+
+    def test_example_dob_respects_count_window_boundaries(self, client):
+        """A 20-person DOB is inside the 5-20 window, a 21-person DOB is
+        not — asserts the aggregate's counts are exact."""
+        for i in range(20):
+            Person.objects.create(first_name=f"In{i}", last_name="Inrange", date_of_birth="1991-01-10")
+        for i in range(21):
+            Person.objects.create(first_name=f"Out{i}", last_name="Outher", date_of_birth="1991-02-20")
+        response = client.get("/help/")
+        assert response.context["examples"]["dob"] == "1991-01-10"
+
+    def test_examples_served_from_cache_on_second_call(self, client):
+        """First generation populates the cache via cache.add; the second
+        call is served from cache even after the table changes."""
+        self._seed_example_dobs()
+        response = client.get("/help/")
+        cached = cache.get("help_examples")
+        assert cached is not None
+        assert cached == response.context["examples"]
+        # New rows that would enter the 5-20 window if recomputed...
+        for i in range(15):
+            Person.objects.create(first_name=f"Late{i}", last_name="Late", date_of_birth="1990-08-04")
+        # ...but a plain request must still get the cached examples.
+        response = client.get("/help/")
+        assert response.context["examples"] == cached
+
+    def test_refresh_bypasses_cache(self, client):
+        """?refresh=1 invalidates the cache and regenerates (the bypass
+        still works with cache.add), and repopulates the cache."""
+        Person.objects.create(first_name="Bob", last_name="Beta", date_of_birth="1990-06-02")
+        # No DOB in the 5-20 window yet: examples fall back to 1990-01-01.
+        client.get("/help/")
+        assert cache.get("help_examples")["dob"] == "1990-01-01"
+        # Now a DOB enters the window; a plain request still serves cache...
+        for i in range(5):
+            Person.objects.create(first_name=f"Ann{i}", last_name="Alfa", date_of_birth="1990-05-01")
+        assert client.get("/help/").context["examples"]["dob"] == "1990-01-01"
+        # ...while refresh picks up the new DOB and repopulates the cache.
+        response = client.get("/help/?refresh=1")
+        assert response.status_code == 200
+        assert response.context["examples"]["dob"] == "1990-05-01"
+        assert cache.get("help_examples")["dob"] == "1990-05-01"
 
 
 class TestModeSQLTooltipEscaping:
