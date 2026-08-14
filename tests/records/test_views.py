@@ -8,10 +8,19 @@ from datetime import date
 
 import pytest
 from django.core.cache import cache
+from django.db import connection
+from django.test import override_settings
 
 from records.models import Person
 
 pytestmark = pytest.mark.django_db
+
+# EXPLAIN plans render table scans as "Seq Scan on records_person" and index
+# scans as "Index Scan using <index> on records_person" (or Bitmap variants
+# for GIN/GiST); the scan node is what a valid mode's plan must contain.
+_SCAN_NODE_RE = re.compile(
+    r"(Seq Scan|Index Scan|Index Only Scan|Bitmap Heap Scan)( using [A-Za-z_0-9]+)? on records_person"
+)
 
 
 class TestSearchModes:
@@ -745,6 +754,15 @@ class TestDobClearButtonRendering:
         assert "createElement('button')" not in html
         assert "clearBtn.remove()" not in html
 
+    def test_clear_button_not_in_results_partial(self, client):
+        """The Clear button lives only in the page shell (home.html), not in the
+        htmx results partial — swapping #search-results never duplicates or drops it."""
+        response = client.get("/search/?first_name=John", HTTP_HX_REQUEST="true")
+        assert response.status_code == 200
+        html = response.content.decode()
+        assert 'id="dob-clear-btn"' not in html
+        assert "dob-clear-link" not in html
+
 
 class TestTop100Label:
     """B6: the results badge says 'top N', not an unqualified total."""
@@ -831,6 +849,51 @@ class TestSearchExplain:
         assert response.context["sql"] is None
         assert "Provide a first_name" in response.content.decode()
 
+    @pytest.mark.parametrize("mode", ["prefix", "legacy", "soundex", "dm", "trigram"])
+    def test_explain_plan_nonempty_with_scan_node(self, client, mode):
+        """Every valid mode yields a non-empty plan that scans records_person."""
+        response = client.get(f"/search/explain/?mode={mode}&first_name=John&last_name=Smith")
+        assert response.status_code == 200
+        plan = response.context["plan"]
+        assert plan
+        assert _SCAN_NODE_RE.search(plan), f"no scan node on records_person in plan:\n{plan}"
+
+    def test_explain_prefix_plan_carries_prefix_conditions(self, client):
+        """The prefix plan carries the query's LIKE-prefix conditions (no soundex)."""
+        response = client.get("/search/explain/?mode=prefix&first_name=John&last_name=Smith")
+        plan = response.context["plan"]
+        assert plan
+        assert "JOHN%" in plan
+        assert "SMITH%" in plan
+        assert "soundex" not in plan.lower()
+
+    def test_explain_legacy_plan_carries_substring_like(self, client):
+        """The legacy plan carries the unindexed substring LIKE conditions."""
+        response = client.get("/search/explain/?mode=legacy&first_name=John&last_name=Smith")
+        plan = response.context["plan"]
+        assert plan
+        assert "%JOHN%" in plan
+        assert "%SMITH%" in plan
+        assert "soundex" not in plan.lower()
+
+    def test_explain_soundex_plan_carries_soundex_codes(self, client):
+        """The soundex plan carries SOUNDEX code comparisons, not LIKE operators."""
+        response = client.get("/search/explain/?mode=soundex&first_name=John&last_name=Smith")
+        plan = response.context["plan"]
+        assert plan
+        assert "soundex" in plan.lower()
+        assert "S530" in plan  # SOUNDEX('SMITH')
+        assert "J500" in plan  # SOUNDEX('JOHN')
+        assert "~~" not in plan  # no LIKE/ILIKE operator in the plan
+
+    def test_explain_trigram_plan_carries_knn_distance(self, client):
+        """The trigram plan carries the <-> KNN distance ordering."""
+        response = client.get("/search/explain/?mode=trigram&first_name=John&last_name=Smith")
+        plan = response.context["plan"]
+        assert plan
+        assert "<->" in plan
+        assert "soundex" not in plan.lower()
+
     def test_results_fragment_explain_link_all_modes_encoded(self, client):
         """The results fragment links explain with ALL enabled modes, URL-encoded."""
         response = client.get("/search/?modes=legacy,levenshtein&first_name=J%26J", HTTP_HX_REQUEST="true")
@@ -838,3 +901,182 @@ class TestSearchExplain:
         html = response.content.decode()
         assert "modes=legacy%2Clevenshtein" in html
         assert "first_name=J%26J" in html
+
+
+class TestModeCheckboxCheckedState:
+    """P1-11: the rendered checkboxes' `checked` attribute reflects ?modes=... ."""
+
+    @staticmethod
+    def _checkbox_html(html, mode):
+        match = re.search(rf'<input[^>]*value="{re.escape(mode)}"[^>]*>', html)
+        assert match, f"checkbox for {mode!r} not found in rendered HTML"
+        return match.group(0)
+
+    def test_requested_modes_are_checked_others_are_not(self, client):
+        """?modes=prefix,soundex -> exactly those checkboxes carry `checked`."""
+        response = client.get("/?modes=prefix,soundex&first_name=John&last_name=Smith")
+        assert response.status_code == 200
+        html = response.content.decode()
+        assert "checked" in self._checkbox_html(html, "prefix")
+        assert "checked" in self._checkbox_html(html, "soundex")
+        for mode in ("legacy", "dm", "levenshtein", "trigram"):
+            assert "checked" not in self._checkbox_html(html, mode)
+
+    def test_all_modes_requested_all_checked(self, client):
+        """With every mode checked (and a base mode present), all six are checked."""
+        response = client.get("/?modes=prefix,legacy,soundex,dm,levenshtein,trigram&first_name=John")
+        assert response.status_code == 200
+        html = response.content.decode()
+        for mode in ("prefix", "legacy", "soundex", "dm", "levenshtein", "trigram"):
+            assert "checked" in self._checkbox_html(html, mode)
+
+    def test_default_only_prefix_checked(self, client):
+        """No ?modes -> the default (prefix only) is checked, the rest are not."""
+        response = client.get("/")
+        assert response.status_code == 200
+        html = response.content.decode()
+        assert "checked" in self._checkbox_html(html, "prefix")
+        for mode in ("legacy", "soundex", "dm", "levenshtein", "trigram"):
+            assert "checked" not in self._checkbox_html(html, mode)
+
+
+class TestModeSqlTooltips:
+    """P1-11: the mode-SQL tooltip span exists exactly for enabled modes that have
+    a name to build SQL from; disabled modes (or a nameless query) render no span."""
+
+    @staticmethod
+    def _tooltip_title(html, mode):
+        """Return the tooltip span's title on the mode's label, or None if absent."""
+        for chunk in html.split("<label"):
+            if f'value="{mode}"' in chunk:
+                label = chunk.split("</label>")[0]
+                match = re.search(r'title="([^"]*)"', label)
+                return match.group(1) if match else None
+        raise AssertionError(f"label for mode {mode!r} not found in rendered HTML")
+
+    @pytest.fixture(autouse=True)
+    def _seed_data(self):
+        Person.objects.create(first_name="John", last_name="Smith", date_of_birth="1990-01-01")
+
+    def test_enabled_modes_with_name_have_tooltips(self, client):
+        """Enabled modes with a name in the query carry the mode-SQL tooltip."""
+        response = client.get("/search/?modes=prefix,legacy,soundex&first_name=John&last_name=Smith")
+        assert response.status_code == 200
+        html = response.content.decode()
+        prefix_title = self._tooltip_title(html, "prefix")
+        # Title attributes are auto-escaped (quotes render as &#x27;), so assert
+        # on the quote-free fragments of the mode-SQL snippet.
+        assert prefix_title
+        assert "UPPER(first_name) LIKE" in prefix_title
+        assert "JOHN%" in prefix_title and "SMITH%" in prefix_title
+        legacy_title = self._tooltip_title(html, "legacy")
+        assert legacy_title and "ILIKE" in legacy_title and "%John%" in legacy_title and "%Smith%" in legacy_title
+        soundex_title = self._tooltip_title(html, "soundex")
+        assert soundex_title and "SOUNDEX(" in soundex_title and "SMITH" in soundex_title
+        # The phonetic tooltip also carries the query's real phonetic codes.
+        assert "John=J500" in soundex_title
+        assert "Smith=S530" in soundex_title
+
+    def test_disabled_modes_have_no_tooltip_span(self, client):
+        """A disabled mode's label renders no tooltip span at all (not an empty title)."""
+        response = client.get("/search/?modes=prefix&first_name=John&last_name=Smith")
+        assert response.status_code == 200
+        html = response.content.decode()
+        assert self._tooltip_title(html, "prefix") is not None
+        for mode in ("legacy", "soundex", "dm", "levenshtein", "trigram"):
+            assert self._tooltip_title(html, mode) is None
+
+    def test_nameless_query_has_no_tooltips(self, client):
+        """No name in the query -> mode_sql is empty for every mode -> no tooltips."""
+        response = client.get("/search/?modes=prefix,soundex")
+        assert response.status_code == 200
+        html = response.content.decode()
+        for mode in ("prefix", "legacy", "soundex", "dm", "levenshtein", "trigram"):
+            assert self._tooltip_title(html, mode) is None
+
+
+class TestSqlQueriesPanel:
+    """P1-11: the results fragment's 'SQL queries' panel shows the generated SQL
+    only while Django's query logging is on (settings.DEBUG)."""
+
+    @pytest.fixture(autouse=True)
+    def _fresh_query_log(self):
+        """The test connection is shared across the session; clear its query log
+        so leftover DEBUG=True logging cannot leak into the DEBUG=False test."""
+        connection.queries_log.clear()
+        yield
+        connection.queries_log.clear()
+
+    @pytest.fixture(autouse=True)
+    def _seed_data(self):
+        Person.objects.create(first_name="John", last_name="Smith", date_of_birth="1990-01-01")
+
+    def test_sql_rendered_when_debug_true(self, client):
+        """With DEBUG=True the search's generated SQL is captured and rendered."""
+        with override_settings(DEBUG=True):
+            response = client.get("/search/?modes=prefix&first_name=John&last_name=Smith")
+        assert response.status_code == 200
+        assert response.context["queries"], "connection.queries must be populated under DEBUG=True"
+        assert any("records_person" in q["sql"] for q in response.context["queries"])
+        assert "SELECT" in response.content.decode()
+
+    def test_sql_not_rendered_when_debug_false(self, client):
+        """With DEBUG=False nothing is logged: the panel shows a count of 0 and no SQL."""
+        with override_settings(DEBUG=False):
+            response = client.get("/search/?modes=prefix&first_name=John&last_name=Smith")
+        assert response.status_code == 200
+        assert response.context["queries"] == []
+        html = response.content.decode()
+        assert "SQL queries (0)" in html
+        assert "SELECT" not in html
+
+
+class TestHXRequestPartialResponse:
+    """P1-11: a normal GET returns the full page; HX-Request: true returns only
+    the results partial that htmx swaps into #search-results."""
+
+    SHELL_MARKERS = (
+        "<!DOCTYPE html",
+        "<html",
+        '<form id="search-form"',
+        "Fuzzy Name Search at Scale",
+        "htmx.org",
+    )
+
+    @pytest.fixture(autouse=True)
+    def _seed_data(self):
+        Person.objects.create(first_name="John", last_name="Smith", date_of_birth="1990-01-01")
+
+    def test_normal_get_returns_full_page_with_results(self, client):
+        """A plain browser GET renders the page shell with the results inlined."""
+        response = client.get("/search/?modes=prefix&first_name=John&last_name=Smith")
+        assert response.status_code == 200
+        html = response.content.decode()
+        for marker in self.SHELL_MARKERS:
+            assert marker in html
+        assert 'id="search-results"' in html
+        assert "Search Results" in html
+
+    def test_hx_request_returns_results_partial_only(self, client):
+        """HX-Request: true returns the fragment: results markers in, shell markers out."""
+        response = client.get(
+            "/search/?modes=prefix&first_name=John&last_name=Smith",
+            HTTP_HX_REQUEST="true",
+        )
+        assert response.status_code == 200
+        html = response.content.decode()
+        for marker in self.SHELL_MARKERS:
+            assert marker not in html
+        assert 'id="search-results"' not in html  # that div belongs to the shell
+        assert "Search Results" in html
+        assert "Showing top 1 match" in html
+        assert "John" in html
+
+    def test_hx_request_without_name_returns_empty_state_partial(self, client):
+        """The nameless HX response is the empty-state fragment, still without the shell."""
+        response = client.get("/search/?modes=prefix", HTTP_HX_REQUEST="true")
+        assert response.status_code == 200
+        html = response.content.decode()
+        for marker in self.SHELL_MARKERS:
+            assert marker not in html
+        assert "Enter a name to search" in html

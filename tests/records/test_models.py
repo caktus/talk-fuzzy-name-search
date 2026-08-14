@@ -388,3 +388,33 @@ class TestUnifiedSearchNicknameLimitation:
         """
         results = Person.objects.search_dm("Bob", "Smith")
         assert [(p.first_name, p.last_name) for p in results] == []
+
+
+class TestSearchPhoneticHeroCase:
+    """P1-11 hero case: search_phonetic("John", "Smyth") finds "John Smith".
+
+    Smyth/Smythe share Soundex code S530 with Smith and sit within edit
+    distance 2, so both the Soundex pre-filter and the Levenshtein
+    refinement accept them.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _seed_data(self):
+        Person.objects.create(first_name="John", last_name="Smith", date_of_birth="1990-05-15")
+        # Decoy: same first name, different last-name soundex (J553) — must not match.
+        Person.objects.create(first_name="John", last_name="Jones", date_of_birth="1990-06-15")
+
+    def test_smyth_finds_smith(self):
+        """Typo variant 'Smyth' (distance 1) finds 'John Smith'."""
+        results = Person.objects.search_phonetic("John", "Smyth")
+        assert [(p.first_name, p.last_name) for p in results] == [("John", "Smith")]
+
+    def test_smythe_finds_smith(self):
+        """Variant 'Smythe' (distance 2) still matches within the tolerance."""
+        results = Person.objects.search_phonetic("John", "Smythe")
+        assert [(p.first_name, p.last_name) for p in results] == [("John", "Smith")]
+
+    def test_unified_soundex_mode_finds_smith(self):
+        """The unified search's OR-ed soundex group finds him as well."""
+        results = Person.objects.search_unified(["soundex"], "John", "Smyth")
+        assert [(p.first_name, p.last_name) for p in results] == [("John", "Smith")]

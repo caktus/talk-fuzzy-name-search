@@ -6,7 +6,7 @@ and (seed, count, as-of) reproducibility.
 """
 
 from datetime import date
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import numpy as np
 import polars as pl
@@ -20,6 +20,29 @@ pytestmark = pytest.mark.django_db
 
 # Fixed reference date so tests never depend on the wall clock.
 AS_OF = date(2026, 1, 1)
+
+
+class ScriptedRng:
+    """A stand-in for np.random.Generator with scripted choice()/integers() replies.
+
+    Lets _inject_typo's branch selection (swap/drop/substitute) and its index
+    draws be exercised deterministically instead of by chance. Exhausting a
+    script raises StopIteration, so a test that asks for one more draw than the
+    code path makes will fail loudly.
+    """
+
+    def __init__(self, choices, integers):
+        self._choices = iter(choices)
+        self._integers = iter(integers)
+        self.integers_calls = []  # (low, high, value) per draw, in call order
+
+    def choice(self, _options):
+        return next(self._choices)
+
+    def integers(self, low, high):
+        value = next(self._integers)
+        self.integers_calls.append((low, high, value))
+        return value
 
 
 class TestNamePoolGeneration:
@@ -171,6 +194,83 @@ class TestTypoInjection:
         assert cmd._inject_typo("A", rng) == "A"
 
 
+class TestTypoInjectionBranches:
+    """P1-11: deterministic branch coverage for _inject_typo.
+
+    A scripted fake RNG (ScriptedRng) pins the swap/drop/substitute branch
+    selection and the index draws, so each branch's output shape is asserted
+    exactly rather than by chance.
+    """
+
+    def test_swap_branch_exchanges_adjacent_pair(self):
+        """swap at index 0 exchanges the first two characters; length and letters preserved."""
+        rng = ScriptedRng(choices=["swap"], integers=[0])
+        result = Command()._inject_typo("SMITH", rng)
+        assert result == "MSITH"
+        assert len(result) == len("SMITH")
+        assert set(result) == set("SMITH")
+        # The position draw is over [0, len(name) - 1).
+        assert rng.integers_calls == [(0, 4, 0)]
+
+    def test_swap_branch_two_char_name(self):
+        """The shortest swappable name: 'AB' -> 'BA' (single possible swap position)."""
+        rng = ScriptedRng(choices=["swap"], integers=[0])
+        result = Command()._inject_typo("AB", rng)
+        assert result == "BA"
+        assert rng.integers_calls == [(0, 1, 0)]
+
+    def test_drop_branch_removes_one_char(self):
+        """drop at index 2 shortens the name by exactly one character."""
+        rng = ScriptedRng(choices=["drop"], integers=[2])
+        result = Command()._inject_typo("SMITH", rng)
+        assert result == "SMTH"
+        assert len(result) == len("SMITH") - 1
+        assert rng.integers_calls == [(0, 5, 2)]  # position over [0, len(name))
+
+    def test_drop_branch_two_char_name(self):
+        """Dropping from a two-char name leaves one character."""
+        rng = ScriptedRng(choices=["drop"], integers=[1])
+        assert Command()._inject_typo("AB", rng) == "A"
+
+    def test_substitute_branch_replaces_one_char(self):
+        """substitute replaces exactly one character with the drawn uppercase letter."""
+        rng = ScriptedRng(choices=["substitute"], integers=[1, 3])
+        result = Command()._inject_typo("SMITH", rng)
+        assert result == "SDITH"  # index 1 replaced by ascii_uppercase[3] == 'D'
+        assert len(result) == len("SMITH")
+        # Two draws: the position in [0, len), then the letter in [0, 26).
+        assert rng.integers_calls == [(0, 5, 1), (0, 26, 3)]
+
+    def test_no_op_attempt_retries_until_changed(self):
+        """A substitute that draws the same character leaves the name unchanged and
+        the retry loop picks a fresh branch; the drop then succeeds."""
+        rng = ScriptedRng(
+            choices=["substitute", "drop"],
+            integers=[1, 12, 0],  # substitute 'M' at index 1 is a no-op; drop index 0
+        )
+        result = Command()._inject_typo("SMITH", rng)
+        assert result == "MITH"
+        assert len(result) == 4
+
+    def test_single_char_name_unchanged(self):
+        """len(name) < 2 returns early without drawing anything from the RNG."""
+        rng = ScriptedRng(choices=[], integers=[])  # would raise StopIteration if called
+        assert Command()._inject_typo("A", rng) == "A"
+
+    def test_all_same_chars_swap_falls_back(self):
+        """Swapping identical characters can never change the name: after all 10
+        retry attempts fail, the deterministic fallback changes the last character."""
+        rng = ScriptedRng(choices=["swap"] * 10, integers=[0] * 10)
+        result = Command()._inject_typo("AAA", rng)
+        assert result == "AAB"  # 'AA' + next letter after 'A'
+        assert len(result) == 3
+
+    def test_all_same_chars_lowercase_drop(self):
+        """All-same-chars with drop on lowercase input: drop always changes the name."""
+        rng = ScriptedRng(choices=["drop"], integers=[1])
+        assert Command()._inject_typo("aaa", rng) == "aa"
+
+
 class TestClusterExpansion:
     """Test _expand_clusters produces correct cluster structures."""
 
@@ -307,6 +407,67 @@ class TestBulkInsert:
         cmd._bulk_insert(expanded)
         with_middle = Person.objects.exclude(middle_name__isnull=True).count()
         assert with_middle > len(expanded) * 0.8  # Allow some variance
+
+    @staticmethod
+    def _generated_frame(n: int) -> pl.DataFrame:
+        """A generation-shaped DataFrame: the same columns _expand_clusters outputs
+        (datetime64 DOBs, object UUIDs, list-of-str nicknames, nullable middles)."""
+        return pl.DataFrame(
+            {
+                "first_name": [f"First{i}" for i in range(n)],
+                "last_name": [f"Last{i % 500}" for i in range(n)],
+                "middle_name": [None if i % 2 else "M" for i in range(n)],
+                "date_of_birth": np.full(n, np.datetime64("1990-01-01"), dtype="datetime64[D]"),
+                "person_id": [uuid4() for _ in range(n)],
+                "nicknames": [["Nick"] if i % 1000 == 0 else [] for i in range(n)],
+            }
+        )
+
+    @staticmethod
+    def _spy_bulk_create(monkeypatch) -> list:
+        """Record the row count of every bulk_create call the insert performs."""
+        calls: list[int] = []
+        original = Person.objects.bulk_create
+
+        def spy(objs, *args, **kwargs):
+            calls.append(len(objs))
+            return original(objs, *args, **kwargs)
+
+        monkeypatch.setattr(Person.objects, "bulk_create", spy)
+        return calls
+
+    def test_bulk_insert_20k_rows_single_chunk(self, monkeypatch):
+        """P1-11: 20,000 rows — below the 100K BATCH_SIZE, so one chunk — all land
+        in the table via a single bulk_create call, with the data intact."""
+        cmd = Command()
+        df = self._generated_frame(20_000)
+        calls = self._spy_bulk_create(monkeypatch)
+
+        cmd._bulk_insert(df)
+
+        assert calls == [20_000]
+        assert Person.objects.count() == 20_000
+        # Spot-check the round trip (including the datetime64 -> date conversion).
+        row = Person.objects.get(first_name="First1235")
+        assert row.last_name == "Last235"  # 1235 % 500
+        assert row.date_of_birth == date(1990, 1, 1)
+        assert row.middle_name is None  # odd index
+        assert Person.objects.get(first_name="First0").middle_name == "M"  # even index
+        assert Person.objects.get(first_name="First0").nicknames == ["Nick"]
+        assert row.person_id is not None
+
+    def test_bulk_insert_multi_chunk_with_small_batch_size(self, monkeypatch):
+        """P1-11: with BATCH_SIZE shrunk to 5000, 12,000 rows exercise the
+        chunk loop: three bulk_create calls of 5000 + 5000 + 2000."""
+        cmd = Command()
+        df = self._generated_frame(12_000)
+        monkeypatch.setattr("records.management.commands.seed_data.BATCH_SIZE", 5000)
+        calls = self._spy_bulk_create(monkeypatch)
+
+        cmd._bulk_insert(df)
+
+        assert calls == [5000, 5000, 2000]
+        assert Person.objects.count() == 12_000
 
 
 class TestBatchSizing:
