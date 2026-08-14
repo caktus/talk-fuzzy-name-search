@@ -492,6 +492,58 @@ class TestHelpPage:
         assert response.status_code == 200
 
 
+class TestModeSQLTooltipEscaping:
+    """B2 regression: mode-SQL tooltips must not reflect raw request input.
+
+    _mode_sql() interpolates raw query params into the SQL snippets rendered
+    in the checkbox tooltips. They must be auto-escaped in the title
+    attributes so a crafted name cannot break out of the attribute
+    (reflected XSS).
+    """
+
+    @pytest.fixture(autouse=True)
+    def _seed_data(self):
+        Person.objects.create(
+            first_name="John",
+            last_name="Smith",
+            date_of_birth=date(1990, 1, 1),
+        )
+
+    @staticmethod
+    def _assert_escaped_in_tooltip(response, raw_name):
+        assert response.status_code == 200
+        html = response.content.decode()
+        # The raw attribute-breakout sequence must not be present unescaped.
+        assert 'onmouseover="alert(1)' not in html
+        # The crafted name must appear escaped inside the tooltip
+        # (Django's escaper renders " as &quot;).
+        assert f"{raw_name}&quot; onmouseover=&quot;alert(1)" in html
+
+    def test_legacy_tooltip_escapes_first_name(self, client):
+        """A quote in first_name (legacy mode) renders escaped in the tooltip."""
+        response = client.get(
+            "/search/",
+            {"modes": "legacy", "first_name": 'x" onmouseover="alert(1)', "last_name": "Smith"},
+        )
+        self._assert_escaped_in_tooltip(response, "x")
+
+    def test_legacy_tooltip_escapes_last_name(self, client):
+        """A quote in last_name (legacy mode) renders escaped in the tooltip."""
+        response = client.get(
+            "/search/",
+            {"modes": "legacy", "first_name": "John", "last_name": 'x" onmouseover="alert(1)'},
+        )
+        self._assert_escaped_in_tooltip(response, "x")
+
+    def test_trigram_tooltip_escapes_first_name(self, client):
+        """A quote in first_name (trigram mode, original-case path) renders escaped."""
+        response = client.get(
+            "/search/",
+            {"modes": "trigram", "first_name": 'x" onmouseover="alert(1)'},
+        )
+        self._assert_escaped_in_tooltip(response, "x")
+
+
 class TestMultipleModes:
     """Test that multiple modes combine correctly (OR behavior)."""
 

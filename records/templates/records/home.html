@@ -62,12 +62,12 @@
                                     <label class="inline-flex items-center gap-1.5 text-sm cursor-pointer group">
                                         <input type="checkbox" class="mode-checkbox rounded border-gray-300 text-green-600 shadow-sm focus:ring-green-600" value="prefix" {% if "prefix" in enabled_modes %}checked{% endif %}>
                                         <span class="text-gray-700 group-hover:text-gray-900">{{ modes.prefix.label }}</span>
-                                        {% if mode_sql.prefix %}<span class="text-gray-400 cursor-help text-xs" title="{{ mode_sql.prefix|safe }}">(i)</span>{% endif %}
+                                        {% if mode_sql.prefix %}<span class="text-gray-400 cursor-help text-xs" title="{{ mode_sql.prefix }}">(i)</span>{% endif %}
                                     </label>
                                     <label class="inline-flex items-center gap-1.5 text-sm cursor-pointer group">
                                         <input type="checkbox" class="mode-checkbox rounded border-gray-300 text-green-600 shadow-sm focus:ring-green-600" value="legacy" {% if "legacy" in enabled_modes %}checked{% endif %}>
                                         <span class="text-gray-700 group-hover:text-gray-900">{{ modes.legacy.label }}</span>
-                                        {% if mode_sql.legacy %}<span class="text-gray-400 cursor-help text-xs" title="{{ mode_sql.legacy|safe }}">(i)</span>{% endif %}
+                                        {% if mode_sql.legacy %}<span class="text-gray-400 cursor-help text-xs" title="{{ mode_sql.legacy }}">(i)</span>{% endif %}
                                     </label>
                                 </div>
                             </div>
@@ -78,12 +78,12 @@
                                     <label class="inline-flex items-center gap-1.5 text-sm cursor-pointer group">
                                         <input type="checkbox" class="mode-checkbox rounded border-gray-300 text-blue-600 shadow-sm focus:ring-blue-600" value="soundex" {% if "soundex" in enabled_modes %}checked{% endif %}>
                                         <span class="text-gray-700 group-hover:text-gray-900">{{ modes.soundex.label }}</span>
-                                        {% if mode_sql.soundex %}<span class="text-gray-400 cursor-help text-xs" title="Phonetic code equality.\nSoundex: {{ first_name }}={{ phonetic_codes.soundex_fn }}, {{ last_name }}={{ phonetic_codes.soundex_ln }}\n{{ mode_sql.soundex|safe }}">(i)</span>{% endif %}
+                                        {% if mode_sql.soundex %}<span class="text-gray-400 cursor-help text-xs" title="Phonetic code equality.\nSoundex: {{ first_name }}={{ phonetic_codes.soundex_fn }}, {{ last_name }}={{ phonetic_codes.soundex_ln }}\n{{ mode_sql.soundex }}">(i)</span>{% endif %}
                                     </label>
                                     <label class="inline-flex items-center gap-1.5 text-sm cursor-pointer group">
                                         <input type="checkbox" class="mode-checkbox rounded border-gray-300 text-blue-600 shadow-sm focus:ring-blue-600" value="dm" {% if "dm" in enabled_modes %}checked{% endif %}>
                                         <span class="text-gray-700 group-hover:text-gray-900">{{ modes.dm.label }}</span>
-                                        {% if mode_sql.dm %}<span class="text-gray-400 cursor-help text-xs" title="Phonetic codes for Slavic/Germanic names.\nDM: {{ first_name }}={{ phonetic_codes.dm_fn }}, {{ last_name }}={{ phonetic_codes.dm_ln }}\n{{ mode_sql.dm|safe }}">(i)</span>{% endif %}
+                                        {% if mode_sql.dm %}<span class="text-gray-400 cursor-help text-xs" title="Phonetic codes for Slavic/Germanic names.\nDM: {{ first_name }}={{ phonetic_codes.dm_fn }}, {{ last_name }}={{ phonetic_codes.dm_ln }}\n{{ mode_sql.dm }}">(i)</span>{% endif %}
                                     </label>
                                 </div>
                             </div>
@@ -95,12 +95,12 @@
                                         <label class="inline-flex items-center gap-1.5 text-sm cursor-pointer group">
                                             <input type="checkbox" class="mode-checkbox rounded border-gray-300 text-amber-600 shadow-sm focus:ring-amber-600" value="levenshtein" {% if "levenshtein" in enabled_modes and has_base_mode %}checked{% endif %}{% if not has_base_mode %}disabled{% endif %}>
                                             <span class="text-gray-700 group-hover:text-gray-900">{{ modes.levenshtein.label }}</span>
-                                            {% if mode_sql.levenshtein %}<span class="text-gray-400 cursor-help text-xs" title="{{ mode_sql.levenshtein|safe }}">(i)</span>{% endif %}
+                                            {% if mode_sql.levenshtein %}<span class="text-gray-400 cursor-help text-xs" title="{{ mode_sql.levenshtein }}">(i)</span>{% endif %}
                                         </label>
                                         <label class="inline-flex items-center gap-1.5 text-sm cursor-pointer group">
                                             <input type="checkbox" class="mode-checkbox rounded border-gray-300 text-amber-600 shadow-sm focus:ring-amber-600" value="trigram" {% if "trigram" in enabled_modes %}checked{% endif %}>
                                             <span class="text-gray-700 group-hover:text-gray-900">{{ modes.trigram.label }}</span>
-                                            {% if mode_sql.trigram %}<span class="text-gray-400 cursor-help text-xs" title="{{ mode_sql.trigram|safe }}">(i)</span>{% endif %}
+                                            {% if mode_sql.trigram %}<span class="text-gray-400 cursor-help text-xs" title="{{ mode_sql.trigram }}">(i)</span>{% endif %}
                                         </label>
                                     </div>
                                     <p id="levenshtein-hint" class="mt-1 text-xs text-amber-600{% if has_base_mode %} hidden{% endif %}">
