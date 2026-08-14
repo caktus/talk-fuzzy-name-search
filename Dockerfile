@@ -20,11 +20,15 @@ ENV PATH="/root/.local/bin:$PATH"
 
 WORKDIR /app
 
-# Copy dependency files first (for better caching)
-COPY pyproject.toml uv.lock requirements.txt ./
+# Copy dependency files first (for better caching).
+# gunicorn and whitenoise are declared in pyproject.toml and resolved via
+# uv.lock — there is no separate requirements.txt in the repo.
+COPY pyproject.toml uv.lock ./
 
-# Install production dependencies with uv
-RUN uv pip install --system --no-cache -r requirements.txt
+# Install production dependencies with uv (frozen: exactly what uv.lock pins)
+RUN uv export --frozen --no-dev -o requirements.txt \
+    && uv pip install --system --no-cache -r requirements.txt \
+    && rm requirements.txt
 
 # Copy project code
 COPY . .
@@ -35,9 +39,9 @@ RUN ON_KIND_SETUP=1 python manage.py collectstatic --noinput
 # Expose port
 EXPOSE 8000
 
-# Health check
+# Health check (curl is not installed in the image; use the stdlib instead)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8000/ || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/', timeout=4)"
 
 # Run with gunicorn
 CMD ["gunicorn", "--bind", ":8000", "--workers", "2", "--access-logfile", "-", "fuzzy_demo.wsgi:application"]

@@ -13,6 +13,8 @@ dependencies = [
     "pandas>=3.0.5",
     "polars>=1.0",
     "django-simple-deploy>=1.4.1",
+    "gunicorn>=23.0.0",
+    "whitenoise>=6.7.0",
 ]
 
 [dependency-groups]
