@@ -220,3 +220,74 @@ class TestDobOnlySearchCap:
         results = Person.objects.search_unified([], "", "", self.dob)
         assert isinstance(results, list)
         assert len(results) == 1
+
+
+class TestTrigramVisibility:
+    """B6: trigram rows must stay visible when base modes would fill the whole page."""
+
+    # Near-spelling variants of "Smith" that legacy (icontains) and prefix
+    # (istartswith) never match, but trigram KNN ranks close to "Smith".
+    NEAR_NAMES = ["Smyth", "Smythe", "Smidt", "Smyt", "Smyths"]
+
+    def _seed(self):
+        dob = date(1990, 1, 1)
+        for _ in range(75):
+            Person.objects.create(first_name="John", last_name="Smith", date_of_birth=dob)
+        for first, last in [("Mary", "Smyth"), ("Tom", "Smythe"), ("Pat", "Smidt"), ("Lee", "Smyt"), ("Kim", "Smyths")]:
+            Person.objects.create(first_name=first, last_name=last, date_of_birth=dob)
+
+    def test_trigram_rows_visible_with_many_base_matches(self):
+        """Base mode matches >60 rows; trigram-only rows still make the page."""
+        self._seed()
+        results = Person.objects.search_unified(["legacy", "trigram"], "", "Smith")
+        assert isinstance(results, list)
+        assert len(results) <= 100
+
+        names = [p.last_name for p in results]
+        # All 75 base-mode matches are present, plus the trigram-only names.
+        assert names.count("Smith") == 75
+        for near in self.NEAR_NAMES:
+            assert near in names
+
+        main_rows = [p for p in results if p._match_source & 2]  # legacy bit
+        tri_rows = [p for p in results if p._match_source == 32]  # trigram bit
+        assert len(main_rows) == 60  # base rows capped, reserving trigram slots
+        assert len(tri_rows) == 20  # 15 displaced Smiths + 5 near-spelling names
+
+        # Main rows come first, then the trigram top-up (KNN order, closest first).
+        first_tri = next(i for i, p in enumerate(results) if p._match_source == 32)
+        assert all(p._match_source & 2 for p in results[:first_tri])
+        assert tri_rows[0].last_name == "Smith"  # distance 0 beats the near names
+
+    def test_trigram_only_rows_absent_without_trigram(self):
+        """Control: legacy/prefix never surface the near-spelling names."""
+        self._seed()
+        for modes in (["legacy"], ["prefix"], ["legacy", "prefix"]):
+            results = Person.objects.search_unified(modes, "", "Smith")
+            names = {p.last_name for p in results}
+            assert not names & set(self.NEAR_NAMES)
+
+    def test_no_trigram_keeps_full_base_page_and_order(self):
+        """Without trigram the base list keeps the full 100-row page."""
+        dob = date(1990, 1, 1)
+        expected_smith = [(f"First{i:02d}", "Smith") for i in range(70)]
+        expected_smithers = [(f"First{i:02d}", "Smithers") for i in range(40)]
+        expected = expected_smith + expected_smithers
+        for first, last in reversed(expected):
+            Person.objects.create(first_name=first, last_name=last, date_of_birth=dob)
+        results = Person.objects.search_unified(["legacy"], "", "smith")
+        assert len(results) == 100
+        assert [(p.first_name, p.last_name) for p in results] == expected[:100]
+
+    def test_main_list_ordered_by_last_then_first_name(self):
+        """The main list is ordered by (last_name, first_name), not DB order."""
+        dob = date(1990, 1, 1)
+        for first, last in [("Zed", "Zebra"), ("Ike", "Cherry"), ("Amy", "Apple"), ("Bob", "Berry")]:
+            Person.objects.create(first_name=first, last_name=last, date_of_birth=dob)
+        results = Person.objects.search_unified(["legacy"], "", "e")
+        assert [(p.first_name, p.last_name) for p in results] == [
+            ("Amy", "Apple"),
+            ("Bob", "Berry"),
+            ("Ike", "Cherry"),
+            ("Zed", "Zebra"),
+        ]

@@ -606,3 +606,18 @@ class TestDobOnlySearchRendering:
         # No rows from any other DOB leak in.
         assert "Alice" not in html
         assert "Taylor" not in html
+
+
+class TestTop100Label:
+    """B6: the results badge says 'top N', not an unqualified total."""
+
+    def test_full_page_says_top_100(self, client):
+        """A full 100-row page renders 'Showing top 100 matches'."""
+        for i in range(105):
+            Person.objects.create(first_name=f"First{i:03d}", last_name="Smith", date_of_birth=date(1990, 1, 1))
+        response = client.get("/search/?modes=legacy&last_name=Smith")
+        assert response.status_code == 200
+        assert response.context["count"] == 100
+        html = response.content.decode()
+        assert "Showing top 100 matches" in html
+        assert "100 results" not in html

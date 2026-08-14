@@ -301,6 +301,10 @@ class PersonQuerySet(models.QuerySet):
         qs = self.filter(q)
         if date_of_birth:
             qs = qs.filter(date_of_birth=date_of_birth)
+        # Explicit, stable ordering for the main list (B6): the page must not
+        # render in arbitrary DB order. Rides the (last_name, first_name)
+        # composite index, so the ORDER BY + LIMIT stays cheap.
+        qs = qs.order_by("last_name", "first_name")
 
         # Levenshtein as a precision filter (AND) on top of the other modes
         if "levenshtein" in modes:
@@ -384,9 +388,13 @@ class PersonQuerySet(models.QuerySet):
 
         # Build main list from non-trigram modes.
         # When trigram is the ONLY mode, q is empty — skip the unfiltered scan.
+        # When trigram runs alongside base modes with a name, cap the base rows
+        # at 60 so trigram rows get reserved slots on the page and are actually
+        # visible (B6); without trigram the full 100-row page is base rows.
         main_list = []
         if bool(q):
-            main_list = list(qs[:100])
+            main_limit = 60 if "trigram" in modes and (first_name or last_name) else 100
+            main_list = list(qs[:main_limit])
         main_ids = {obj.id for obj in main_list}
 
         # Trigram via separate query, merged in Python (trigram=32).
