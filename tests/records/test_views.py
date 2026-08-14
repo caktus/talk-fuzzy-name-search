@@ -3,6 +3,7 @@
 Tests the checkbox-based unified search with multiple modes.
 """
 
+import re
 from datetime import date
 
 import pytest
@@ -82,20 +83,44 @@ class TestSearchByDateOfBirth:
             last_name="Smith",
             date_of_birth="1985-03-20",
         )
+        # Shares the queried DOB with the first John — a DOB-only fallback
+        # (B1) would leak this row into name searches.
         Person.objects.create(
-            first_name="Alice",
+            first_name="Robert",
             last_name="Jones",
-            date_of_birth="1992-11-01",
+            date_of_birth="1990-05-15",
         )
 
-    @pytest.mark.parametrize("mode", ["prefix", "soundex", "levenshtein", "dm", "trigram"])
+    @pytest.mark.parametrize(
+        "mode",
+        ["prefix", "soundex", "legacy,levenshtein", "dm"],
+        ids=["prefix", "soundex", "levenshtein", "dm"],
+    )
     def test_date_of_birth_narrows_results(self, client, mode):
-        """DOB filter narrows results to only matching records."""
+        """DOB filter narrows results to only matching records.
+
+        Levenshtein is a precision filter, not a standalone search (B1/B13),
+        so it is exercised on top of a base mode (legacy).
+        """
         response = client.get(f"/search/?modes={mode}&first_name=John&last_name=Smith&date_of_birth=1990-05-15")
         assert response.status_code == 200
         results = response.context["results"]
         assert len(results) == 1
         assert str(results[0]["person"].date_of_birth) == "1990-05-15"
+
+    def test_date_of_birth_narrows_trigram_results(self, client):
+        """Trigram mode returns only rows with the queried DOB, closest match first.
+
+        Unlike the name-matching modes, trigram has no name filter: everyone
+        born that day is returned, ranked by trigram distance.
+        """
+        response = client.get("/search/?modes=trigram&first_name=John&last_name=Smith&date_of_birth=1990-05-15")
+        assert response.status_code == 200
+        results = response.context["results"]
+        assert len(results) == 2
+        assert all(str(r["person"].date_of_birth) == "1990-05-15" for r in results)
+        top = results[0]["person"]
+        assert (top.first_name, top.last_name) == ("John", "Smith")
 
     def test_date_of_birth_alone_returns_matching_record(self, client):
         """DOB alone returns matching records."""
@@ -162,6 +187,54 @@ class TestLevenshteinFilter:
         # Soundex + Levenshtein narrows to exact match (Schmidt is dist 3 from Smith)
         r2 = client.get("/search/?modes=soundex,levenshtein&first_name=John&last_name=Smith")
         assert r2.context["count"] == 1
+
+
+class TestLevenshteinCheckboxUX:
+    """B13 UX: Levenshtein is a precision filter, disabled when no base mode is checked."""
+
+    @pytest.fixture(autouse=True)
+    def _seed_data(self):
+        Person.objects.create(
+            first_name="John",
+            last_name="Smith",
+            date_of_birth="1990-01-01",
+        )
+
+    @staticmethod
+    def _levenshtein_checkbox_html(response):
+        match = re.search(r'<input[^>]*value="levenshtein"[^>]*>', response.content.decode(), re.S)
+        assert match, "levenshtein checkbox not found in rendered HTML"
+        return match.group(0)
+
+    def test_levenshtein_disabled_without_base_mode(self, client):
+        """No base mode checked -> Levenshtein checkbox is disabled with a visible hint."""
+        response = client.get("/search/?modes=levenshtein&first_name=John&last_name=Smith")
+        assert response.status_code == 200
+        checkbox = self._levenshtein_checkbox_html(response)
+        assert "disabled" in checkbox
+        assert "checked" not in checkbox
+        html = response.content.decode()
+        hint = re.search(r'<p id="levenshtein-hint"[^>]*>', html)
+        assert hint, "levenshtein hint not found in rendered HTML"
+        assert "hidden" not in hint.group(0)
+        assert "enable at least one base mode" in html
+
+    def test_levenshtein_enabled_with_base_mode(self, client):
+        """A checked base mode keeps the Levenshtein checkbox enabled (hint hidden)."""
+        response = client.get("/search/?modes=prefix,levenshtein&first_name=John&last_name=Smith")
+        assert response.status_code == 200
+        checkbox = self._levenshtein_checkbox_html(response)
+        assert "disabled" not in checkbox
+        assert "checked" in checkbox
+        hint = re.search(r'<p id="levenshtein-hint"[^>]*>', response.content.decode())
+        assert hint
+        assert "hidden" in hint.group(0)
+
+    def test_levenshtein_only_search_returns_no_results(self, client):
+        """B13 pin: Levenshtein alone + name renders an empty result set via the UI."""
+        response = client.get("/search/?modes=levenshtein&first_name=John&last_name=Smith")
+        assert response.status_code == 200
+        assert response.context["count"] == 0
 
 
 class TestMatchSourceAnnotation:

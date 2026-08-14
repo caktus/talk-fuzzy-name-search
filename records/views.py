@@ -88,6 +88,12 @@ MATCH_LABELS = {
 
 DEFAULT_MODES = [k for k, v in SEARCH_MODES.items() if v["default"]]
 
+# Base modes that Levenshtein can refine. Levenshtein is a precision filter
+# on top of base modes, not a standalone search: with no base mode enabled
+# the UI disables the Levenshtein checkbox and search_unified() returns no
+# rows for a name query (see B1/B13).
+BASE_MODES = ["prefix", "legacy", "soundex", "dm", "trigram"]
+
 
 def _queryset_for(mode: str, first_name: str, last_name: str, date_of_birth=None):
     """Return the QuerySet implementing the given search mechanism (for EXPLAIN)."""
@@ -269,6 +275,7 @@ def _search_response(request: HttpRequest) -> HttpResponse:
         {
             "modes": SEARCH_MODES,
             "enabled_modes": enabled_modes,
+            "has_base_mode": any(m in BASE_MODES for m in enabled_modes),
             "match_labels": MATCH_LABELS,
             "first_name": first_name,
             "last_name": last_name,
@@ -405,14 +412,17 @@ def _generate_help_examples() -> dict:
         }
     )
 
-    # Levenshtein: use a typo
+    # Levenshtein: use a typo. Levenshtein is a precision filter, not a
+    # standalone search (B13), so the link pairs it with a base mode —
+    # legacy LIKE always matches the truncated name, and the 1-char
+    # truncation is within the edit-distance-2 tolerance.
     lev_fn = base_fn[: max(1, len(base_fn) - 1)]  # Remove last char
     lev_ln = base_ln
     groups.append(
         {
             "label": "Fuzzy",
             "color": "amber",
-            "mode": "levenshtein",
+            "mode": "legacy,levenshtein",
             "fn": lev_fn,
             "ln": lev_ln,
             "desc": f"Levenshtein allows up to 2 edits from '{lev_fn} {lev_ln}'",

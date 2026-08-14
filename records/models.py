@@ -286,7 +286,12 @@ class PersonQuerySet(models.QuerySet):
                 q |= ExpressionWrapper(RawSQL(sql, params), output_field=BooleanField())
 
         if not q and "trigram" not in modes:
-            if date_of_birth:
+            # No base mode could build a condition (e.g. only Levenshtein is
+            # checked). Levenshtein is a precision filter on top of base
+            # modes, not a standalone search, so a name query must not fall
+            # back to the bare DOB set — that would silently ignore the name.
+            # Only a nameless DOB search returns the DOB-filtered set.
+            if date_of_birth and not first_name and not last_name:
                 return self.filter(date_of_birth=date_of_birth)
             return self.none()
 

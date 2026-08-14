@@ -3,6 +3,8 @@
 Captures existing behavior of Person model, QuerySet methods, and phonetic search.
 """
 
+from datetime import date
+
 import pytest
 
 from records.models import Person, PersonQuerySet
@@ -150,3 +152,40 @@ class TestDateOfBirthFilter:
         """With no name and no date_of_birth, search_legacy returns nothing."""
         results = Person.objects.search_legacy("", "")
         assert results.count() == 0
+
+
+class TestLevenshteinOnlySemantics:
+    """B1/B13: Levenshtein is a precision filter on top of base modes, not a standalone search."""
+
+    @pytest.fixture(autouse=True)
+    def _seed_data(self):
+        self.dob = date(1990, 5, 15)
+        # Two people share the queried DOB: the pre-fix DOB fallback returned
+        # both of them for any name.
+        Person.objects.create(first_name="John", last_name="Smith", date_of_birth=self.dob)
+        Person.objects.create(first_name="Robert", last_name="Jones", date_of_birth=self.dob)
+
+    def test_levenshtein_only_name_and_dob_returns_nothing(self):
+        """B1: name + DOB with only Levenshtein must not return everyone born that day."""
+        results = Person.objects.search_unified(["levenshtein"], "Qzzz", "Zzzz", self.dob)
+        assert list(results) == []
+
+    def test_levenshtein_only_name_without_dob_returns_nothing(self):
+        """B13: Levenshtein checked alone with a name yields no results."""
+        results = Person.objects.search_unified(["levenshtein"], "Qzzz", "Zzzz")
+        assert list(results) == []
+
+    def test_levenshtein_only_dob_without_name_still_returns_dob_set(self):
+        """No name given: the DOB-only early return is preserved."""
+        results = Person.objects.search_unified(["levenshtein"], "", "", self.dob)
+        assert len(list(results)) == 2
+
+    def test_levenshtein_refines_base_mode(self):
+        """Base mode + Levenshtein still narrows results (distance 1 in, distance 3 out)."""
+        # "Joh" is a substring of "John" (legacy matches) at distance 1.
+        found = Person.objects.search_unified(["legacy", "levenshtein"], "Joh", "Smith", self.dob)
+        assert [(p.first_name, p.last_name) for p in found] == [("John", "Smith")]
+        # "J" also matches legacy, but dist("J", "JOHN") = 3 — Levenshtein excludes it.
+        assert list(Person.objects.search_unified(["legacy", "levenshtein"], "J", "Smith", self.dob)) == []
+        # Control: legacy alone would have matched "J".
+        assert len(Person.objects.search_unified(["legacy"], "J", "Smith", self.dob)) == 1

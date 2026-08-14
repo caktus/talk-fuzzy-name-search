@@ -90,17 +90,22 @@
                             <!-- Fuzzy -->
                             <div class="flex items-start gap-3">
                                 <span class="text-xs font-semibold text-amber-700 uppercase tracking-wide mt-0.5 shrink-0 w-16">Fuzzy</span>
-                                <div class="flex flex-wrap gap-x-4 gap-y-1">
-                                    <label class="inline-flex items-center gap-1.5 text-sm cursor-pointer group">
-                                        <input type="checkbox" class="mode-checkbox rounded border-gray-300 text-amber-600 shadow-sm focus:ring-amber-600" value="levenshtein" {% if "levenshtein" in enabled_modes %}checked{% endif %}>
-                                        <span class="text-gray-700 group-hover:text-gray-900">{{ modes.levenshtein.label }}</span>
-                                        {% if mode_sql.levenshtein %}<span class="text-gray-400 cursor-help text-xs" title="{{ mode_sql.levenshtein|safe }}">(i)</span>{% endif %}
-                                    </label>
-                                    <label class="inline-flex items-center gap-1.5 text-sm cursor-pointer group">
-                                        <input type="checkbox" class="mode-checkbox rounded border-gray-300 text-amber-600 shadow-sm focus:ring-amber-600" value="trigram" {% if "trigram" in enabled_modes %}checked{% endif %}>
-                                        <span class="text-gray-700 group-hover:text-gray-900">{{ modes.trigram.label }}</span>
-                                        {% if mode_sql.trigram %}<span class="text-gray-400 cursor-help text-xs" title="{{ mode_sql.trigram|safe }}">(i)</span>{% endif %}
-                                    </label>
+                                <div>
+                                    <div class="flex flex-wrap gap-x-4 gap-y-1">
+                                        <label class="inline-flex items-center gap-1.5 text-sm cursor-pointer group">
+                                            <input type="checkbox" class="mode-checkbox rounded border-gray-300 text-amber-600 shadow-sm focus:ring-amber-600" value="levenshtein" {% if "levenshtein" in enabled_modes and has_base_mode %}checked{% endif %}{% if not has_base_mode %}disabled{% endif %}>
+                                            <span class="text-gray-700 group-hover:text-gray-900">{{ modes.levenshtein.label }}</span>
+                                            {% if mode_sql.levenshtein %}<span class="text-gray-400 cursor-help text-xs" title="{{ mode_sql.levenshtein|safe }}">(i)</span>{% endif %}
+                                        </label>
+                                        <label class="inline-flex items-center gap-1.5 text-sm cursor-pointer group">
+                                            <input type="checkbox" class="mode-checkbox rounded border-gray-300 text-amber-600 shadow-sm focus:ring-amber-600" value="trigram" {% if "trigram" in enabled_modes %}checked{% endif %}>
+                                            <span class="text-gray-700 group-hover:text-gray-900">{{ modes.trigram.label }}</span>
+                                            {% if mode_sql.trigram %}<span class="text-gray-400 cursor-help text-xs" title="{{ mode_sql.trigram|safe }}">(i)</span>{% endif %}
+                                        </label>
+                                    </div>
+                                    <p id="levenshtein-hint" class="mt-1 text-xs text-amber-600{% if has_base_mode %} hidden{% endif %}">
+                                        Refines results of the other modes — enable at least one base mode.
+                                    </p>
                                 </div>
                             </div>
                         </div>
@@ -148,16 +153,30 @@
             </main>
         </div>
         <script>
+        var BASE_MODES = ['prefix', 'legacy', 'soundex', 'dm', 'trigram'];
+        function updateLevenshteinState() {
+            // Levenshtein refines the other modes — disable it when no base mode is checked.
+            var lev = document.querySelector('.mode-checkbox[value="levenshtein"]');
+            var hint = document.getElementById('levenshtein-hint');
+            var hasBase = false;
+            document.querySelectorAll('.mode-checkbox').forEach(function(cb) {
+                if (cb.value !== 'levenshtein' && BASE_MODES.indexOf(cb.value) !== -1 && cb.checked) hasBase = true;
+            });
+            lev.disabled = !hasBase;
+            if (!hasBase && lev.checked) lev.checked = false;
+            if (hint) hint.classList.toggle('hidden', hasBase);
+        }
         function updateModes() {
             var checkboxes = document.querySelectorAll('.mode-checkbox');
             var enabled = [];
             checkboxes.forEach(function(cb) {
-                if (cb.checked) enabled.push(cb.value);
+                if (cb.checked && !cb.disabled) enabled.push(cb.value);
             });
             document.getElementById('modes').value = enabled.join(',');
         }
         document.addEventListener("change", function (e) {
             if (e.target.classList.contains('mode-checkbox')) {
+                updateLevenshteinState();
                 updateModes();
                 htmx.trigger("#search-form", "run-search");
             }
@@ -191,6 +210,7 @@
             }
         }
         document.getElementById('date_of_birth').addEventListener('change', updateDobClear);
+        updateLevenshteinState();
         updateModes();
         updateDobClear();
         </script>
