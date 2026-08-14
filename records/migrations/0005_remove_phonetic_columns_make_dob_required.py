@@ -27,22 +27,9 @@ class Migration(migrations.Migration):
         # Remove old GIN indexes on phonetic arrays
         migrations.RemoveIndex(model_name="person", name="idx_person_first_phonetic"),
         migrations.RemoveIndex(model_name="person", name="idx_person_last_phonetic"),
-        # Add functional B-tree indexes for SOUNDEX equality comparisons
-        migrations.RunSQL(
-            sql="CREATE INDEX idx_person_first_name_soundex ON records_person (SOUNDEX(UPPER(first_name)))",
-            reverse_sql="DROP INDEX IF EXISTS idx_person_first_name_soundex",
-        ),
-        migrations.RunSQL(
-            sql="CREATE INDEX idx_person_last_name_soundex ON records_person (SOUNDEX(UPPER(last_name)))",
-            reverse_sql="DROP INDEX IF EXISTS idx_person_last_name_soundex",
-        ),
-        # Add functional GIN indexes for DAITCH_MOKOTOFF array overlap (&&)
-        migrations.RunSQL(
-            sql="CREATE INDEX idx_person_first_name_dm ON records_person USING GIN (DAITCH_MOKOTOFF(UPPER(first_name)))",
-            reverse_sql="DROP INDEX IF EXISTS idx_person_first_name_dm",
-        ),
-        migrations.RunSQL(
-            sql="CREATE INDEX idx_person_last_name_dm ON records_person USING GIN (DAITCH_MOKOTOFF(UPPER(last_name)))",
-            reverse_sql="DROP INDEX IF EXISTS idx_person_last_name_dm",
-        ),
+        # NOTE: the four functional phonetic indexes (idx_person_{first,last}_name_{soundex,dm})
+        # previously created here via RunSQL are now created by real CreateIndex operations in
+        # 0007_alter_person_person_id_and_more so the migration state matches the models
+        # (RECS-2026-08-14 B11). The RunSQL was stateless, so removing it is safe for already-
+        # migrated databases; live databases already have the indexes and apply 0007 --fake.
     ]
