@@ -96,3 +96,104 @@ Run used `--seed 42`. Note: with that earlier generator revision this run was **
 - ✅ Confirm duplicate cluster bug — hypothesis 1 confirmed (stale data from multiple seed runs)
   - Fresh 54M seed: no duplicate large clusters found
   - Stuart Dorsey: 48 distinct person_ids, all with different DOBs, max cluster size 4
+
+## EXPLAIN verification (2026-08-14)
+
+B17 (RECS-2026-08-14): the three unverified plan claims, checked on the live 54M DB. Method: `EXPLAIN (ANALYZE, BUFFERS)` via psql against `fuzzy_demo` (read-only; EXPLAIN ANALYZE executes the query, so every query is bounded by LIMIT 100 with common names). Server: PostgreSQL 18.4 (Ubuntu 18.4-0ubuntu0.26.04.1, x86_64). Collation: C.UTF-8; table is 54,000,000 rows.
+
+SQL fidelity: the actual running SQL was captured from `search_unified()` itself (Django `CaptureQueriesContext`, DEBUG=True) and compared with the explained SQL. For trigram modes the explained SQL is the running SQL modulo the SELECT list (distance annotations) and `ORDER BY <ordinal>` vs. the same expressions — plan-relevant clauses (WHERE/ORDER BY/LIMIT) are identical. For prefix mode the task-form SQL is the bare filter + LIMIT; the actual UI query additionally carries `ORDER BY last_name, first_name` and a match_source CASE — both variants are explained below.
+
+### (a) First-name-only prefix search — verdict: **refuted** (index is used; no seq scan)
+
+Claim: `search_exact("John", "")` cannot use the composite `(UPPER(last_name), UPPER(first_name))` index → likely seq scan of 54M rows for type-ahead.
+
+Task-form SQL:
+
+```sql
+EXPLAIN (ANALYZE, BUFFERS) SELECT id FROM records_person
+WHERE UPPER(first_name) LIKE 'JOHN%' LIMIT 100;
+```
+
+```
+Limit  (actual time=1.682..3.826 rows=100.00 loops=1)
+  Buffers: shared hit=10 read=93
+  ->  Index Scan using idx_person_name_prefix on records_person
+        Index Cond: ((upper(first_name) ~>=~ 'JOHN') AND (upper(first_name) ~<~ 'JOHO'))
+        Filter: (upper(first_name) ~~ 'JOHN%')
+        Index Searches: 2
+  Execution Time: 3.842 ms
+```
+
+PG 14+ **index skip scan**: the composite index *is* usable for a second-column-only prefix condition — the planner skips across `upper(last_name)` values and range-scans `upper(first_name)` within each; with LIMIT 100 it stops after 100 rows.
+
+The actual UI query (prefix mode in `search_unified`) also sorts by `last_name, first_name`:
+
+```sql
+SELECT ..., (CASE WHEN UPPER(first_name) LIKE 'JOHN%' THEN 1 ELSE 0 END) AS _match_source
+FROM records_person
+WHERE UPPER(first_name) LIKE 'JOHN%' ORDER BY last_name, first_name LIMIT 100;
+```
+
+```
+Limit  (actual time=378.724..378.732 rows=100.00 loops=1)
+  Buffers: shared hit=11741 read=120749
+  ->  Sort  (Sort Key: last_name, first_name; Sort Method: top-N heapsort  Memory: 38kB)
+        ->  Index Scan using idx_person_name_prefix on records_person
+              Index Cond: ((upper(first_name) ~>=~ 'JOHN') AND (upper(first_name) ~<~ 'JOHO'))
+              Index Searches: 2013
+              (actual time=0.054..356.905 rows=157781.00 loops=1)
+  Execution Time: 378.771 ms
+```
+
+The ORDER BY cannot ride the index order (the planner sees `last_name` ≠ `upper(last_name)`), so the skip scan must visit all 157,781 `JOHN%` rows before the top-N heapsort can emit 100. Still no seq scan.
+
+Implication: type-ahead on first name alone is index-assisted, not a 54M-row seq scan — ~4 ms for the bare filter, ~0.4 s for the UI query as written. (The planner estimated 3,374 `JOHN%` rows; actual is 157,781 — heavy-tail frequencies vs. uniform statistics.)
+
+### (b) Dual-name trigram KNN ordering — verdict: **partially confirmed** (no seq scan, but ~14 s)
+
+Claim: the docstring's "incremental sort via the last_name GiST index" is doubtful for two different distance expressions → likely seq scan + top-N heap sort.
+
+Dual-name SQL (as run by trigram mode in `search_unified`):
+
+```sql
+EXPLAIN (ANALYZE, BUFFERS) SELECT id FROM records_person
+ORDER BY (last_name <-> 'Smith'), (first_name <-> 'John') LIMIT 100;
+```
+
+```
+Limit  (actual time=14047.929..14047.938 rows=100.00 loops=1)
+  Buffers: shared hit=7373 read=373299
+  ->  Incremental Sort  (actual time=14047.927..14047.931 rows=100.00 loops=1)
+        Sort Key: ((last_name <-> 'Smith')), ((first_name <-> 'John'))
+        Presorted Key: ((last_name <-> 'Smith'))
+        Pre-sorted Groups: 1  Sort Method: top-N heapsort  Peak Memory: 29kB
+        ->  Index Scan using idx_person_last_name_trgm on records_person
+              Order By: (last_name <-> 'Smith')
+              Index Searches: 1
+              (actual time=0.580..14020.359 rows=52281.00 loops=1)
+  Execution Time: 14464.094 ms
+```
+
+Not a seq scan: PG 18 picks the KNN index scan on `idx_person_last_name_trgm` for the first ORDER BY term and an **Incremental Sort** presorted by last-name distance — i.e. the docstring's "incremental sort via the last_name GiST index" is literally the plan shape chosen. But the scan cannot stop at 100 rows: it runs until last-name distance exceeds the current top-100's worst (52,281 rows visited, ~373k buffer reads, ~14 s). The docstring's ranking statement also holds: results are ordered by last-name closeness, first_name breaks ties only.
+
+Single-name contrast (the docstring's fast path — confirmed):
+
+```sql
+EXPLAIN (ANALYZE, BUFFERS) SELECT id FROM records_person
+ORDER BY (last_name <-> 'Smith') LIMIT 100;
+```
+
+```
+Limit  (actual time=0.559..6.819 rows=100.00 loops=1)
+  Buffers: shared hit=22 read=278
+  ->  Index Scan using idx_person_last_name_trgm on records_person
+        Order By: (last_name <-> 'Smith')
+        Index Searches: 1
+  Execution Time: 7.263 ms
+```
+
+Pure KNN index scan, stops at 100 rows: ~7 ms vs ~14 s for the dual-name form.
+
+### (c) 1.4 GB peak-memory claim
+
+Not re-measured in this pass; the generator now bounds batches at 2M identities (B10) so peak memory is bounded to one batch — a targeted re-measurement during a deliberate re-seed is the follow-up.
