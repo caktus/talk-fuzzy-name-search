@@ -570,3 +570,39 @@ class TestMultipleModes:
         response = client.get("/search/?modes=prefix")
         assert response.status_code == 200
         assert response.context["count"] == 0
+
+
+class TestDobOnlySearchRendering:
+    """B7: a DOB-only search renders its result rows, not the 'Enter a name' empty state."""
+
+    @pytest.fixture(autouse=True)
+    def _seed_data(self):
+        self.dob = "1990-05-15"
+        Person.objects.create(first_name="John", last_name="Smith", date_of_birth=self.dob)
+        Person.objects.create(first_name="Robert", last_name="Jones", date_of_birth=self.dob)
+        # Shares no DOB with the query — must never leak into the results.
+        Person.objects.create(first_name="Alice", last_name="Taylor", date_of_birth="1985-03-20")
+
+    def test_dob_only_renders_result_rows(self, client):
+        """A DOB-only search (no name) shows the matching rows, not the empty state."""
+        response = client.get(f"/search/?date_of_birth={self.dob}")
+        assert response.status_code == 200
+        assert response.context["count"] == 2
+        names = set((r["person"].first_name, r["person"].last_name) for r in response.context["results"])
+        assert names == {("John", "Smith"), ("Robert", "Jones")}
+        html = response.content.decode()
+        assert "John" in html
+        assert "Robert" in html
+        assert "Enter a name to search" not in html
+
+    def test_dob_only_no_match_renders_empty_state(self, client):
+        """A DOB with no people renders the no-results message (no crash, no stale rows)."""
+        response = client.get("/search/?date_of_birth=1970-01-01")
+        assert response.status_code == 200
+        assert response.context["count"] == 0
+        html = response.content.decode()
+        assert "No results found" in html
+        assert "Enter a name to search" not in html
+        # No rows from any other DOB leak in.
+        assert "Alice" not in html
+        assert "Taylor" not in html

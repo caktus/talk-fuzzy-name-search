@@ -189,3 +189,34 @@ class TestLevenshteinOnlySemantics:
         assert list(Person.objects.search_unified(["legacy", "levenshtein"], "J", "Smith", self.dob)) == []
         # Control: legacy alone would have matched "J".
         assert len(Person.objects.search_unified(["legacy"], "J", "Smith", self.dob)) == 1
+
+
+class TestDobOnlySearchCap:
+    """B7: a DOB-only search is capped at 100 rows and returns a materialized list."""
+
+    @pytest.fixture(autouse=True)
+    def _seed_data(self):
+        self.dob = date(1990, 1, 1)
+
+    def test_dob_only_capped_at_100(self):
+        """150 people sharing one DOB -> exactly 100 rows returned."""
+        for i in range(150):
+            Person.objects.create(first_name=f"First{i}", last_name=f"Last{i}", date_of_birth=self.dob)
+        results = Person.objects.search_unified([], "", "", self.dob)
+        assert isinstance(results, list)
+        assert len(results) == 100
+
+    def test_dob_only_returns_all_when_under_100(self):
+        """A DOB with fewer than 100 people returns all of them."""
+        for i in range(3):
+            Person.objects.create(first_name=f"First{i}", last_name=f"Last{i}", date_of_birth=self.dob)
+        results = Person.objects.search_unified([], "", "", self.dob)
+        assert isinstance(results, list)
+        assert len(results) == 3
+
+    def test_dob_only_returns_materialized_list(self):
+        """The DOB-only path returns a Python list (fetched), not a lazy QuerySet."""
+        Person.objects.create(first_name="John", last_name="Smith", date_of_birth=self.dob)
+        results = Person.objects.search_unified([], "", "", self.dob)
+        assert isinstance(results, list)
+        assert len(results) == 1

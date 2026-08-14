@@ -208,7 +208,7 @@ class PersonQuerySet(models.QuerySet):
         first_name: str,
         last_name: str,
         date_of_birth: datetime.date | None = None,
-    ) -> models.QuerySet:
+    ) -> list[Person]:
         """Unified search combining multiple algorithms via Q objects + UNION.
 
         Each enabled mode adds its condition to an OR-ed Q object.
@@ -222,12 +222,14 @@ class PersonQuerySet(models.QuerySet):
             date_of_birth: Optional DOB filter applied to all modes.
 
         Returns:
-            A QuerySet of Person objects (deduplicated, limited to 100).
+            A list of Person objects (deduplicated, limited to 100). Every path
+            materializes and caps at 100, so callers get a bounded, already-
+            fetched list and timing around the call covers the DB fetch.
         """
         from django.db.models import IntegerField, Q, Value
 
         if not first_name and not last_name and not date_of_birth:
-            return self.none()
+            return []
 
         fn_upper = first_name.upper() if first_name else ""
         ln_upper = last_name.upper() if last_name else ""
@@ -292,8 +294,8 @@ class PersonQuerySet(models.QuerySet):
             # back to the bare DOB set — that would silently ignore the name.
             # Only a nameless DOB search returns the DOB-filtered set.
             if date_of_birth and not first_name and not last_name:
-                return self.filter(date_of_birth=date_of_birth)
-            return self.none()
+                return list(self.filter(date_of_birth=date_of_birth)[:100])
+            return []
 
         # Build main queryset
         qs = self.filter(q)
