@@ -17,6 +17,7 @@ Including another URLconf
 
 try:
     import debug_toolbar
+
     HAS_DEBUG_TOOLBAR = True
 except ImportError:
     HAS_DEBUG_TOOLBAR = False

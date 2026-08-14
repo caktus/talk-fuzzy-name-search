@@ -1,0 +1,99 @@
+# CI for talk-fuzzy-name-search (RECS-2026-08-14 P2-18).
+#
+# Runs the full test suite plus a small-seed smoke test (10K rows, NOT the
+# 54M live dataset) against a PostgreSQL 18 service container. Postgres 18 is
+# the major version the project is verified against (live server: 18.4); the
+# official `postgres:18` tag tracks the latest 18.x. The image ships the
+# fuzzystrmatch and pg_trgm contrib modules, and the service user `postgres`
+# is a superuser, so the app's `CREATE EXTENSION` migrations succeed.
+#
+# Pre-commit is intentionally NOT run as a separate job: its two meaningful
+# gates (ruff check/format, makemigrations --check) are covered by the
+# explicit steps below, `uv sync --frozen` already fails when uv.lock is
+# stale (covers the uv-lock hook), and the remaining `language: system`
+# hooks (missing-migrations) depend on runner-specific PATH/DB ordering,
+# which is flaky in CI. The rest (prettier/djlint/django-upgrade) are
+# style-only.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: fuzzy_demo
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # Minimal real env for the settings (fuzzy_demo/settings.py):
+      # DATABASE_URL (env.db default is a no-password local dev URL),
+      # DEBUG (defaults to True), DJANGO_SECRET_KEY (has an insecure
+      # default; set explicitly for CI).
+      DATABASE_URL: psql://postgres:postgres@localhost:5432/fuzzy_demo
+      DEBUG: "False"
+      DJANGO_SECRET_KEY: ci-secret-key
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - uses: astral-sh/setup-uv@v10
+
+      # --frozen fails if uv.lock is out of sync with pyproject.toml (same
+      # guarantee as the uv-lock pre-commit hook); --all-groups installs the
+      # dev group (pytest, ruff, ...) -- in CI environments uv sync excludes
+      # dev groups unless explicitly requested.
+      - name: Install dependencies
+        run: uv sync --frozen --all-groups
+
+      - name: Ruff (lint)
+        run: uv run ruff check .
+
+      - name: Ruff (format)
+        run: uv run ruff format --check .
+
+      # Same check pre-commit runs: fail if models drifted from migrations.
+      - name: Check for missing migrations
+        run: uv run python manage.py makemigrations --check --dry-run
+
+      # pytest-django creates its own test database (test_fuzzy_demo) from
+      # scratch, proving the full 0001-0007 migration chain including
+      # CREATE EXTENSION fuzzystrmatch/pg_trgm, then runs the whole suite.
+      - name: Run test suite
+        run: uv run pytest tests/ -q
+
+      # Small-seed smoke (RECS P2-18): seed 10K rows in a SCRATCH database
+      # -- never the fuzzy_demo service DB, never anything close to 54M.
+      # migrate first: seed_data assumes the schema (and extensions) exist.
+      - name: Seed smoke (10K rows in scratch DB)
+        env:
+          PGPASSWORD: postgres
+          DATABASE_URL: psql://postgres:postgres@localhost:5432/ci_seed_smoke
+        run: |
+          set -euo pipefail
+          dropdb --if-exists -h localhost -U postgres ci_seed_smoke
+          createdb -h localhost -U postgres ci_seed_smoke
+          uv run python manage.py migrate
+          uv run python manage.py seed_data --count 10000 --seed 42 --as-of 2026-01-01
+          # seed_data trims to the exact --count target on an empty table,
+          # so the count is deterministic.
+          uv run python manage.py shell -c "from records.models import Person; n = Person.objects.count(); print(f'person_count={n}'); assert n == 10000, f'expected 10000 rows, got {n}'"
+          dropdb -h localhost -U postgres ci_seed_smoke

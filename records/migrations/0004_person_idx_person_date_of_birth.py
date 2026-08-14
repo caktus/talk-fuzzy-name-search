@@ -4,14 +4,13 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('records', '0003_remove_person_idx_person_last_name_prefix_and_more'),
+        ("records", "0003_remove_person_idx_person_last_name_prefix_and_more"),
     ]
 
     operations = [
         migrations.AddIndex(
-            model_name='person',
-            index=models.Index(fields=['date_of_birth'], name='idx_person_date_of_birth'),
+            model_name="person",
+            index=models.Index(fields=["date_of_birth"], name="idx_person_date_of_birth"),
         ),
     ]

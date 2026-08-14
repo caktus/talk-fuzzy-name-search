@@ -44,7 +44,10 @@ select = ["E", "F", "I", "N", "W", "UP"]
 [tool.ruff.lint.per-file-ignores]
 # marimo cell functions receive cross-cell variables as arguments, so their
 # names must match the defining variables (e.g. Person, MillisecondTimer).
-"demo.py" = ["N803"]
+# N806: cell-local constants mirror web UI naming (e.g. MATCH_BITS).
+# F821: cross-cell variables (e.g. pd) that marimo's dependency analysis
+# misses inside nested functions; resolved at runtime via the shared namespace.
+"demo.py" = ["N803", "N806", "F821"]
 # Migrations contain auto-generated SQL strings that exceed line length.
 "records/migrations/*" = ["E501"]
 # Seed command uses UPPER_CASE for batch config constants and has long SQL strings.

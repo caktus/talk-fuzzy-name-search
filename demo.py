@@ -79,9 +79,7 @@ def _():
         """List of Person objects from search_unified() -> DataFrame."""
         if not rows:
             return pd.DataFrame()
-        df = pd.DataFrame(
-            [{k: v for k, v in r.__dict__.items() if k != "_state"} for r in rows]
-        )
+        df = pd.DataFrame([{k: v for k, v in r.__dict__.items() if k != "_state"} for r in rows])
         if "_match_source" in df.columns:
             df["matched"] = df["_match_source"].map(match_labels)
             df = df.drop(columns=["_match_source"])
@@ -146,11 +144,7 @@ async def _(MillisecondTimer, Person, mo, persons_to_df, sync_to_async):
         )()
 
     fuzzy_df = persons_to_df(fuzzy_rows)
-    n_smith = (
-        int((fuzzy_df["last_name"].astype(str).str.upper() == "SMITH").sum())
-        if len(fuzzy_df)
-        else 0
-    )
+    n_smith = int((fuzzy_df["last_name"].astype(str).str.upper() == "SMITH").sum()) if len(fuzzy_df) else 0
 
     mo.md(f"""
     All three results below are single `search_unified()` calls -- the exact
