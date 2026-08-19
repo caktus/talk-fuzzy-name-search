@@ -15,7 +15,7 @@ from django.http import HttpRequest, HttpResponse
 from django.template.response import TemplateResponse
 from django.utils.dateparse import parse_date
 
-from .models import Person, apply_levenshtein_filter, build_unified_filter
+from .models import TRIGRAM_SIMILARITY_CUTOFF, Person, apply_levenshtein_filter, build_unified_filter
 
 # Person.objects.count() is a full-table COUNT(*) -- on the 54M-row demo
 # table that's a ~600ms sequential-ish scan, and it's on every page load.
@@ -58,7 +58,7 @@ SEARCH_MODES = {
     },
     "trigram": {
         "label": "Trigram",
-        "description": "pg_trgm similarity — nearest matches by character overlap.",
+        "description": f"pg_trgm KNN ranking, cut at similarity() ≥ {TRIGRAM_SIMILARITY_CUTOFF} per name.",
         "default": False,
     },
     "legacy": {
@@ -246,6 +246,10 @@ def _mode_sql(mode: str, first_name: str, last_name: str, enabled: bool) -> str:
         if ln:
             parts.append(f"DAITCH_MOKOTOFF(UPPER(last_name)) && DAITCH_MOKOTOFF('{ln}')")
     elif mode == "trigram":
+        if fn:
+            parts.append(f"similarity(first_name, '{first_name}') >= {TRIGRAM_SIMILARITY_CUTOFF}")
+        if ln:
+            parts.append(f"similarity(last_name, '{last_name}') >= {TRIGRAM_SIMILARITY_CUTOFF}")
         if fn and ln:
             parts.append(f"ORDER BY (last_name <-> '{last_name}'), (first_name <-> '{first_name}')")
         elif ln:
@@ -261,7 +265,7 @@ def _mode_sql(mode: str, first_name: str, last_name: str, enabled: bool) -> str:
         "soundex": "Phonetic code equality.",
         "levenshtein": "Edit distance ≤ 2.",
         "dm": "Phonetic codes for Slavic/Germanic names.",
-        "trigram": "Character trigram similarity ranking.",
+        "trigram": f"Character trigram KNN ranking, cut at similarity() ≥ {TRIGRAM_SIMILARITY_CUTOFF}.",
     }
     return f"{desc.get(mode, '')} {sql}".strip()
 

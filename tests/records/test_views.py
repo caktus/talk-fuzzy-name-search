@@ -119,15 +119,16 @@ class TestSearchByDateOfBirth:
         assert str(results[0]["person"].date_of_birth) == "1990-05-15"
 
     def test_date_of_birth_narrows_trigram_results(self, client):
-        """Trigram mode returns only rows with the queried DOB, closest match first.
+        """Trigram mode returns only rows with the queried DOB that clear the
+        0.4 similarity() cutoff on every provided name, closest match first.
 
-        Unlike the name-matching modes, trigram has no name filter: everyone
-        born that day is returned, ranked by trigram distance.
+        The Robert Jones row shares the DOB but its names have zero trigram
+        overlap with 'John Smith' (similarity 0 < 0.4), so the cutoff cuts it.
         """
         response = client.get("/search/?modes=trigram&first_name=John&last_name=Smith&date_of_birth=1990-05-15")
         assert response.status_code == 200
         results = response.context["results"]
-        assert len(results) == 2
+        assert len(results) == 1
         assert all(str(r["person"].date_of_birth) == "1990-05-15" for r in results)
         top = results[0]["person"]
         assert (top.first_name, top.last_name) == ("John", "Smith")

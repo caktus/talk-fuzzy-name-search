@@ -226,14 +226,23 @@ class TestTrigramVisibility:
     """B6: trigram rows must stay visible when base modes would fill the whole page."""
 
     # Near-spelling variants of "Smith" that legacy (icontains) and prefix
-    # (istartswith) never match, but trigram KNN ranks close to "Smith".
-    NEAR_NAMES = ["Smyth", "Smythe", "Smidt", "Smyt", "Smyths"]
+    # (istartswith) never match, but trigram ranks close to "Smith" *and* clear
+    # the 0.4 similarity() cutoff (Smit=0.57, Smitz/Smity/Smita/Smits=0.5).
+    # (The old fixtures Smyth/Smythe/Smidt/Smyt/Smyths were all <0.4 and would be
+    # cut by the new threshold.)
+    NEAR_NAMES = ["Smit", "Smitz", "Smity", "Smita", "Smits"]
 
     def _seed(self):
         dob = date(1990, 1, 1)
         for _ in range(75):
             Person.objects.create(first_name="John", last_name="Smith", date_of_birth=dob)
-        for first, last in [("Mary", "Smyth"), ("Tom", "Smythe"), ("Pat", "Smidt"), ("Lee", "Smyt"), ("Kim", "Smyths")]:
+        for first, last in [
+            ("Mary", "Smit"),
+            ("Tom", "Smitz"),
+            ("Pat", "Smity"),
+            ("Lee", "Smita"),
+            ("Kim", "Smits"),
+        ]:
             Person.objects.create(first_name=first, last_name=last, date_of_birth=dob)
 
     def test_trigram_rows_visible_with_many_base_matches(self):

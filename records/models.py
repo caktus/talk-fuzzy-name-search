@@ -21,6 +21,42 @@ from django.db.models.functions import Upper
 from .expressions import LevenshteinLessEqual
 from .phonetics import resolve_variants
 
+# Minimum pg_trgm similarity() a result must reach, applied per provided name
+# by every trigram search path (standalone search_trigram, trigram_ordered,
+# and therefore search_unified's trigram mode and the EXPLAIN endpoint).
+# 0.3 (pg_trgm's own similarity_threshold default) keeps close variants (a
+# deleted/inserted letter: similarity("Smit", "Smith") = 0.57,
+# similarity("BEJNAMIN", "BENJAMIN") = 0.385) while still cutting most of the
+# noise a bare KNN top-100 would surface for a rare spelling.
+TRIGRAM_SIMILARITY_CUTOFF = 0.3
+
+
+def _trigram_similarity_filters(first_name: str, last_name: str) -> dict:
+    """Return the similarity() >= cutoff filters for the provided name(s).
+
+    Both names are cut when both are provided; a nameless query (DOB-only)
+    yields no filter.
+    """
+    filters = {}
+    if first_name:
+        filters["_first_sim__gte"] = TRIGRAM_SIMILARITY_CUTOFF
+    if last_name:
+        filters["_last_sim__gte"] = TRIGRAM_SIMILARITY_CUTOFF
+    return filters
+
+
+def _apply_trigram_similarity_filter(qs: PersonQuerySet, first_name: str, last_name: str) -> PersonQuerySet:
+    """Annotate similarity() on each provided name and cut below the threshold."""
+    filters = _trigram_similarity_filters(first_name, last_name)
+    if not filters:
+        return qs
+    annotations = {}
+    if first_name:
+        annotations["_first_sim"] = RawSQL("similarity(first_name, %s)", [first_name])
+    if last_name:
+        annotations["_last_sim"] = RawSQL("similarity(last_name, %s)", [last_name])
+    return qs.annotate(**annotations).filter(**filters)
+
 
 def build_unified_filter(modes: list[str], first_name: str, last_name: str) -> Q:
     """Build the OR-ed WHERE condition that search_unified() runs for base modes.
@@ -227,7 +263,11 @@ class PersonQuerySet(models.QuerySet):
     ) -> PersonQuerySet:
         """Trigram similarity search via pg_trgm KNN.
 
-        Single name: GiST index-ordered scan via ``<->`` — fast, no threshold.
+        Every provided name must reach ``TRIGRAM_SIMILARITY_CUTOFF`` (0.3) via
+        ``similarity()`` — that cuts the noise a bare KNN top-100 would surface
+        for a rare spelling.
+
+        Single name: GiST index-ordered scan via ``<->`` after the cutoff.
 
         Both names: chained ``ORDER BY`` (``last_name <-> b, first_name <-> a``)
         uses the last_name GiST index for incremental-sort. Results ranked
@@ -239,6 +279,7 @@ class PersonQuerySet(models.QuerySet):
         qs = self
         if date_of_birth:
             qs = qs.filter(date_of_birth=date_of_birth)
+        qs = _apply_trigram_similarity_filter(qs, first_name, last_name)
 
         if first_name and last_name:
             return qs.annotate(
@@ -257,8 +298,12 @@ class PersonQuerySet(models.QuerySet):
     def trigram_ordered(self, first_name: str, last_name: str) -> PersonQuerySet:
         """Apply the pg_trgm KNN ORDER BY used by search_unified()'s trigram mode.
 
-        Callers must ensure at least one name is provided.
+        Each provided name is also cut at ``TRIGRAM_SIMILARITY_CUTOFF`` via
+        ``similarity()`` — the EXPLAIN endpoint and search_unified() both build
+        their queryset through here, so the explained SQL always matches the
+        search SQL. Callers must ensure at least one name is provided.
         """
+        self = _apply_trigram_similarity_filter(self, first_name, last_name)
         if first_name and last_name:
             return self.annotate(
                 _last_dist=RawSQL("(last_name <-> %s)", [last_name]),

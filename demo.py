@@ -328,8 +328,9 @@ def _(mo):
     "nearest neighbour" (KNN) scan. This is exactly what the `trigram` mode of
     `search_unified()` runs (via `trigram_ordered()`).
 
-    - **No threshold to tune** -- `ORDER BY last_name <-> 'Smyth' LIMIT 100`
-      returns the 100 closest names, however loose the matches
+    - **Similarity cutoff** -- `similarity(name, query) >= 0.3` per provided
+      name (TRIGRAM_SIMILARITY_CUTOFF, pg_trgm's own default threshold) cuts
+      the noise a bare KNN top-100 surfaces for a rare spelling
     - **Index-ordered** -- no scan-then-sort over a large candidate set
 
     The trade-offs (measured on 54M rows; EXPLAIN plans in `54M_status.md`):
@@ -360,13 +361,19 @@ async def _(MillisecondTimer, Person, name_query, pd, sync_to_async):
 
     def run_knn_search(name):
         # GiST `<->` distance ordering: an index-ordered KNN scan that
-        # returns the closest names first -- no threshold and no
-        # scan-then-sort over a large candidate set. Same SQL shape the
+        # returns the closest names first, cut at similarity() >= 0.3, with
+        # no scan-then-sort over a large candidate set. Same SQL shape the
         # trigram mode of search_unified() runs (single-name form).
-        qs = Person.objects.annotate(
-            similarity=RawSQL("similarity(last_name, %s)", [name]),
-            distance=RawSQL("last_name <-> %s", [name]),
-        ).order_by("distance")[:100]
+        from records.models import TRIGRAM_SIMILARITY_CUTOFF
+
+        qs = (
+            Person.objects.annotate(
+                similarity=RawSQL("similarity(last_name, %s)", [name]),
+                distance=RawSQL("last_name <-> %s", [name]),
+            )
+            .filter(similarity__gte=TRIGRAM_SIMILARITY_CUTOFF)
+            .order_by("distance")[:100]
+        )
         return list(qs.values("first_name", "last_name", "similarity"))
 
     with MillisecondTimer():
@@ -495,7 +502,7 @@ def _(mo):
     2. **Levenshtein as a precision filter** -- `levenshtein_less_equal(..., 2)`
        with early exit, AND-ed on top of the base modes (never standalone).
     3. **pg_trgm GiST KNN** -- the trigram mode orders by `<->` distance via
-       index scan; no threshold to tune.
+       index scan, cut at `similarity() >= 0.3` per provided name.
     4. **`text_pattern_ops` B-tree** -- fast case-insensitive type-ahead for
        the prefix mode.
     5. **One 100-row page** per search, each row annotated with the mode(s)
