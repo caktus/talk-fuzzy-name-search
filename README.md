@@ -10,6 +10,42 @@ Prereqs: Python 3.14+ (see `requires-python` in `pyproject.toml`), `uv`
 and the app's migrations create them for you — the database user just needs
 privilege to create extensions (superuser, or the matching grants).
 
+### Fresh Machine Setup
+
+If you're starting from a clean macOS or Linux machine, install `uv` and
+PostgreSQL first:
+
+**macOS**
+
+```bash
+# uv (Python package/dependency manager)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# PostgreSQL -- either Postgres.app (https://postgresapp.com, no separate
+# service management needed) or Homebrew:
+brew install postgresql@17
+brew services start postgresql@17
+```
+
+**Linux (Debian/Ubuntu)**
+
+```bash
+# uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# PostgreSQL
+sudo apt update
+sudo apt install -y postgresql postgresql-contrib
+sudo systemctl enable --now postgresql
+
+# Create a superuser role matching your OS username (lets you run `psql`
+# and connect without a password locally):
+sudo -u postgres createuser --superuser "$(whoami)"
+```
+
+After installing, confirm `psql` and `uv` are on your `PATH` (you may need
+to restart your shell), then continue below.
+
 ```bash
 # Setup
 cd talk-fuzzy-name-search
