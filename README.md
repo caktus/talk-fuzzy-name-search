@@ -80,6 +80,18 @@ uv run pytest tests/                 # Test suite
 The pre-rewrite CSV pipeline lives in `scripts/legacy/` for reference; it is
 not part of this flow (see `scripts/legacy/README.md`).
 
+## Slides
+
+Running the slides locally:
+```bash
+uv run marimo edit --watch --no-token slides.py
+```
+
+With a token (and listen on local network):
+```bash
+uv run marimo edit --watch --host 0.0.0.0 slides.py
+```
+
 ## What's Inside
 
 - **`records/`** -- Django app with `Person` model, the `search_unified()` search API, and web views

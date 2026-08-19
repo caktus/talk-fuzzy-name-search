@@ -543,7 +543,7 @@ def _():
 @app.cell
 def _():
     _df = mo.sql(
-        """
+        f"""
         SELECT
             *
         FROM
@@ -554,7 +554,7 @@ def _():
             AND date_of_birth = '1993-10-02'
             -- A wildcard in place of the double 'a' finds the row, but is impractical
         """,
-        engine=engine,
+        engine=engine
     )
     return
 
@@ -572,7 +572,7 @@ def _():
 @app.cell
 def _():
     _df = mo.sql(
-        """
+        f"""
         SELECT
             soundex ('Amanda') AS amanda,
             -- Vowel Swaps (Vowels are ignored after the first letter)
@@ -589,7 +589,7 @@ def _():
             soundex ('Amantha') AS amantha,
             soundex ('Amentha') AS amentha;
         """,
-        engine=engine,
+        engine=engine
     )
     return
 
@@ -597,7 +597,7 @@ def _():
 @app.cell
 def _():
     _df = mo.sql(
-        """
+        f"""
         SELECT
             *
         FROM
@@ -608,7 +608,7 @@ def _():
             AND date_of_birth = '1993-10-02'
             -- A soundex() test on first_name finds the typo
         """,
-        engine=engine,
+        engine=engine
     )
     return
 
@@ -616,7 +616,7 @@ def _():
 @app.cell
 def _():
     _df = mo.sql(
-        """
+        f"""
         SELECT
             *
         FROM
@@ -628,7 +628,7 @@ def _():
 
         -- A soundex-only search returns false positives, e.g., "MORRISON" instead of "MORGAN"
         """,
-        engine=engine,
+        engine=engine
     )
     return
 
@@ -636,7 +636,7 @@ def _():
 @app.cell
 def _():
     _df = mo.sql(
-        """
+        f"""
         SELECT
             daitch_mokotoff ('michael') as michael,
             daitch_mokotoff ('mikael') as mikael,
@@ -645,7 +645,7 @@ def _():
         -- Daitch-Mokotoff is similar, but words can have multiple sounds.
         -- We use the overlap ("&&") operator to see if they match
         """,
-        engine=engine,
+        engine=engine
     )
     return
 
@@ -661,13 +661,13 @@ def _():
 @app.cell
 def _():
     _df = mo.sql(
-        """
+        f"""
         SELECT
             levenshtein ('michael', 'mikael');
         --                  ^^         ^
         -- Two (2) character changes are required to go from 'michael' to 'mikael'
         """,
-        engine=engine,
+        engine=engine
     )
     return
 
@@ -675,7 +675,7 @@ def _():
 @app.cell
 def _():
     _df = mo.sql(
-        """
+        f"""
         SELECT
             soundex ('morgan') as soundex_morgan,
             soundex ('morrison') as soundex_morrison,
@@ -683,7 +683,7 @@ def _():
 
         -- soundex codes match, but have a Levenshtein distance of '4'
         """,
-        engine=engine,
+        engine=engine
     )
     return
 
@@ -691,7 +691,7 @@ def _():
 @app.cell
 def _():
     _df = mo.sql(
-        """
+        f"""
         SELECT
             similarity ('Geraldine', 'Gerardine') as geraldine,
             similarity ('Morgan', 'Morrison') as morgan,
@@ -703,7 +703,7 @@ def _():
         -- Scores range from 0 to 1
         -- Two words with the same soundex code might have very low
         """,
-        engine=engine,
+        engine=engine
     )
     return
 
@@ -721,7 +721,7 @@ def _():
 @app.cell
 def _():
     _df = mo.sql(
-        """
+        f"""
         SELECT
             *
         FROM
@@ -740,7 +740,7 @@ def _():
             -- With this (indexed) query we can find 11 similar typos in 54,000,000 rows in <40ms!
             -- Postgres is amazing :)
         """,
-        engine=engine,
+        engine=engine
     )
     return
 
