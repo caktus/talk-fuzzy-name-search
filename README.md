@@ -16,13 +16,13 @@ cd talk-fuzzy-name-search
 uv sync
 
 # Database (one-time)
-sudo -u postgres psql -c "CREATE DATABASE fuzzy_demo;"
+psql -c "CREATE DATABASE fuzzy_demo;"
 
 # Optional: .env. You can skip this entirely if your local Postgres uses the
 # default credentials (settings.py falls back to
 # psql://postgres@localhost:5432/fuzzy_demo).
 cat > .env <<EOF
-DATABASE_URL=psql://postgres:postgres@localhost:5432/fuzzy_demo
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/fuzzy_demo
 DEBUG=True
 DJANGO_SECRET_KEY=django-insecure-demo-key-change-in-production
 EOF
@@ -30,8 +30,9 @@ EOF
 # Migrate + seed a fast local dataset (under a minute)
 uv run python manage.py migrate
 uv run python manage.py seed_data --count 100000 --flush --seed 42 --as-of 2026-01-01
-# Full 54M stage dataset (reference run: ~100 min on a 40 GB machine,
-# see 54M_status.md):
+# Full 54M stage dataset. Rreference runs:
+# ~100 min on a 40 GB Linux VM w/ PCIe 5.0 X4 NVME
+# ~4 hours on a 36 GB MacBook Pro M3 Max (2023)
 # uv run python manage.py seed_data --count 54000000 --flush --seed 42 --as-of 2026-01-01
 
 # Run

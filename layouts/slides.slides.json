@@ -1,0 +1,130 @@
+{
+  "type": "slides",
+  "data": {
+    "cells": [
+      {
+        "type": "skip"
+      },
+      {
+        "speakerNotes": "Welcome! We're really excited to be here today.",
+        "showCode": false
+      },
+      {
+        "speakerNotes": "I'm Tobias, and this is my co-presenter Gerald.\n\nWe're both employee-owners of Caktus Group, a small Django development company based in North Carolina.\n\nI'm a developer and devops person, and Gerald leads quality assurance for Caktus."
+      },
+      {
+        "speakerNotes": "We had a lot of help with this presentation from our colleagues Colin and Simon, who helped with working out the slides and the initial implementation for our client, respectively.\n\nTo set the stage today, we need to take a step back and talk about criminal record expungement."
+      },
+      {
+        "speakerNotes": "(Tobias) For this section of the presentation I will hand it off to Gerald.\n\n(Gerald) This is an area of legal aid where non-profit organizations, public defenders,\nand sometimes private attorneys help community members clear eligible charges\nfrom their records, such as dismissed or not guilty charges.\n\nFor someone trying to secure housing or apply for a job, an expungement can\nbe life-changing. But under the hood, the process of preparing these petitions\nis painfully manual. Attorneys and paralegals must manually track down potentially\nhundreds of records of a period of decades, verify every single charge, and\ntranscribe everything onto strictly formatted court forms."
+      },
+      {
+        "type": "slide",
+        "speakerNotes": "Everything starts with intake. A client comes in, and staff need to\ncollect every name they've gone by, their date of birth, and the counties they've lived in, so nothing gets missed in the search that\nfollows."
+      },
+      {
+        "type": "slide",
+        "speakerNotes": "This is the step we're focused on today. Staff then have to search court and\nlaw-enforcement databases for every record tied to that client, and\nnames are sometimes typed inconsistently \u2014 misspellings, nicknames, abbreviations \u2014\nso a simple exact-match search misses records."
+      },
+      {
+        "type": "slide",
+        "speakerNotes": "Once every record is found, each charge gets checked against state\nstatutes to see if it qualifies for expungement."
+      },
+      {
+        "type": "slide",
+        "speakerNotes": "From there, every eligible charge has to be transcribed onto strictly\nformatted court petition forms, by hand \u2014 another\nmanual, error-prone step in this process."
+      },
+      {
+        "type": "slide",
+        "speakerNotes": "Finally, the completed petition is filed with the court. If it's\ngranted, the records are cleared \u2014 but getting here can take weeks of\nmanual work for a single client."
+      },
+      {
+        "speakerNotes": "When we first took on this project, our assumption was that the core\nchallenge would be eligibility mapping, PDF form generation or other aspects of the\nworkflow\u2014taking client data, applying NC statute rules, and cleanly\ninjecting it into standardized court paperwork. But then we held a\ndedicated discovery workshop with our client.\n\nDuring the workshop, we realized that finding the proper records\nquickly was the true bottleneck preventing eligible community\nmembers from getting help.\n\nThorough record checks are critical because conviction expunctions in North Carolina are generally a one-shot opportunity. Once a court grants a conviction expunction, the client cannot use that statute again\u2014meaning any omitted conviction stays on their record permanently. Comprehensive statewide searches are essential due diligence to ensure every eligible charge is included before filing.",
+        "type": "slide"
+      },
+      {
+        "speakerNotes": "Here is the core problem: the state transitioned away from its legacy system\nto a \"modern\" web portal. While you might expect a newer system to speed up\nlegal workflows, in reality, it severely restricted how attorneys can search\nfor records.\n\nAs you can see on screen, doing a simple name search in this portal routinely\ntakes 10 to 15 seconds\u2014or longer\u2014per query. In our discovery workshop with the\nclient, staff shared that under the new portal system, their record-pulling time\ngrew from 3 hours up to 10 hours per client. To make matters worse, while the\nsystem claims to offer fuzzy search matching, the underlying logic is poorly\nimplemented, ballooning an 6 item search result to 200+ results when selected.\nWhen enabled, it ends up matching too many false positives, rather than giving attorneys what they actually need.\nAnd because the new system caps the search results at 200 records, the risk of missing records is real."
+      },
+      {
+        "speakerNotes": "So why is finding everyone so hard? In our case, we were dealing with a\ndatabase of over 50 million North Carolina court records, and searching by\nname in a dataset that size is not trivial.\n\nFirst, we're not just looking for a single record. We're looking for every\nrecord that belongs to a single person.\n\nSecond, if you think about the lifespan of a criminal record, one can imagine how\ntypos are frequent. A name might be typed on the side of the road by an\narresting officer, transcribed from a hand-written form by a busy court clerk,\nor supplied by a client who spells their name differently\nacross various legal documents, uses nicknames, or hyphenated names.\n\nOn top of that, name collisions are everywhere\u2014thousands of people share the\nexact same first and last name. And date of birth\u2014the one field that could\neasily disambiguate two people\u2014is sometimes missing in court data.\n\nWe realized that if we wanted to build a tool that truly served legal aid\norganizations, public defenders, and community advocates, we had to solve\nthe multi-million record fuzzy search problem using our tools of choice,\nDjango and PostgreSQL.\n\nTo talk more about that, I'll hand it off to Tobias."
+      },
+      {
+        "type": "slide",
+        "speakerNotes": "To help understand the scope of the problem and some of the assumptions we as programmers and technologists might make about names, we highly recommend the article linked here, \"Falsehoods Programmers Believe About Names,\" by Patrick McKenzie in 2010.\n\nSome of them are pretty funny, and I recommend reading through them all on your own time.\n"
+      },
+      {
+        "type": "slide",
+        "speakerNotes": "To share just 5 of the 40,\n\none is that people have exactly one name. In reality, they may have multiple aliases, spellings, nicknames that they use regularly."
+      },
+      {
+        "type": "slide",
+        "speakerNotes": "Another is that names often change over time, through marriage, divorce, or simply deciding to change one's name."
+      },
+      {
+        "type": "slide",
+        "speakerNotes": "Another is that people have a different first name and last name --and this hits close to home with Django's User model--that they have a first name and last name at all. In other countries and cultures, names often don't fit into the neat \"first name\" and \"last name\" boxes."
+      },
+      {
+        "type": "slide",
+        "speakerNotes": "Another assumption is that names are written in ASCII.\n\nIn our case, the entire database of 54 million plus court records was written in ASCII, so non-ASCII characters were simply not present in our dataset."
+      },
+      {
+        "type": "slide",
+        "speakerNotes": "Finally--and this one is was also abundant on our project--it's easy to assume that names will be typed exactly and perfectly every time they're entered. This is not the case, and our dataset of 54M records provided ample evidence of this."
+      },
+      {},
+      {},
+      {},
+      {
+        "showCode": true
+      },
+      {
+        "showCode": true
+      },
+      {
+        "showCode": true
+      },
+      {
+        "showCode": true
+      },
+      {
+        "speakerNotes": "To help"
+      },
+      {
+        "showCode": true
+      },
+      {
+        "showCode": true
+      },
+      {
+        "showCode": true
+      },
+      {
+        "showCode": true
+      },
+      {},
+      {
+        "showCode": true
+      },
+      {
+        "showCode": true
+      },
+      {
+        "showCode": true
+      },
+      {},
+      {
+        "showCode": true
+      },
+      {},
+      {},
+      {},
+      {},
+      {}
+    ],
+    "deck": {
+      "verticalAlign": "top",
+      "transition": "none"
+    }
+  }
+}
