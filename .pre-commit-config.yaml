@@ -21,8 +21,12 @@ repos:
       # Run the linter.
       - id: ruff-check
         args: [--fix]
+        # Marimo rewrites slides.py and reverts ruff's changes (f-prefix
+        # stripping, trailing commas), so keep ruff off this file.
+        exclude: '^slides\.py$'
       # Run the formatter.
       - id: ruff-format
+        exclude: '^slides\.py$'
   - repo: https://github.com/pre-commit/mirrors-prettier
     rev: "v3.1.0"
     hooks:
@@ -38,6 +42,8 @@ repos:
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
+        # Marimo rewrites this layout file and reverts the trailing newline.
+        exclude: '^layouts/slides\.slides\.json$'
       - id: check-yaml
         exclude: "^(deployment/|deploy)"
       - id: check-added-large-files
