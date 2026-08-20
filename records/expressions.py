@@ -7,7 +7,7 @@ of RawSQL.
 
 from django.contrib.postgres.fields import ArrayField
 from django.db.models.expressions import Func
-from django.db.models.fields import CharField, IntegerField
+from django.db.models.fields import CharField, IntegerField, TextField
 
 
 class LevenshteinLessEqual(Func):
@@ -51,4 +51,4 @@ class DaitchMokotoff(Func):
     """
 
     function = "DAITCH_MOKOTOFF"
-    output_field = ArrayField(CharField())
+    output_field = ArrayField(TextField())

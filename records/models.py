@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from django.contrib.postgres.fields import ArrayField
 from django.contrib.postgres.indexes import GinIndex, GistIndex, OpClass
+from django.contrib.postgres.search import TrigramDistance
 from django.db import models
 from django.db.models import F, Q, Value
 from django.db.models.expressions import ExpressionWrapper, RawSQL
@@ -263,11 +264,10 @@ class PersonQuerySet(models.QuerySet):
     ) -> PersonQuerySet:
         """Trigram similarity search via pg_trgm KNN.
 
-        Every provided name must reach ``TRIGRAM_SIMILARITY_CUTOFF`` (0.3) via
-        ``similarity()`` — that cuts the noise a bare KNN top-100 would surface
-        for a rare spelling.
+        Uses Django's built-in ``TrigramDistance`` (the ``<->`` KNN operator,
+        from ``django.contrib.postgres.search``) rather than raw SQL.
 
-        Single name: GiST index-ordered scan via ``<->`` after the cutoff.
+        Single name: GiST index-ordered scan via ``<->`` — fast, no threshold.
 
         Both names: chained ``ORDER BY`` (``last_name <-> b, first_name <-> a``)
         uses the last_name GiST index for incremental-sort. Results ranked
@@ -283,35 +283,33 @@ class PersonQuerySet(models.QuerySet):
 
         if first_name and last_name:
             return qs.annotate(
-                _last_dist=RawSQL("(last_name <-> %s)", [last_name]),
-                _first_dist=RawSQL("(first_name <-> %s)", [first_name]),
+                _last_dist=TrigramDistance(F("last_name"), Value(last_name)),
+                _first_dist=TrigramDistance(F("first_name"), Value(first_name)),
             ).order_by("_last_dist", "_first_dist")
 
         if last_name:
-            return qs.annotate(_distance=RawSQL("(last_name <-> %s)", [last_name])).order_by("_distance")
+            return qs.annotate(_distance=TrigramDistance(F("last_name"), Value(last_name))).order_by("_distance")
 
         if first_name:
-            return qs.annotate(_distance=RawSQL("(first_name <-> %s)", [first_name])).order_by("_distance")
+            return qs.annotate(_distance=TrigramDistance(F("first_name"), Value(first_name))).order_by("_distance")
 
         return qs
 
     def trigram_ordered(self, first_name: str, last_name: str) -> PersonQuerySet:
         """Apply the pg_trgm KNN ORDER BY used by search_unified()'s trigram mode.
 
-        Each provided name is also cut at ``TRIGRAM_SIMILARITY_CUTOFF`` via
-        ``similarity()`` — the EXPLAIN endpoint and search_unified() both build
-        their queryset through here, so the explained SQL always matches the
-        search SQL. Callers must ensure at least one name is provided.
+        Uses Django's built-in ``TrigramDistance`` (the ``<->`` operator).
+        Callers must ensure at least one name is provided.
         """
         self = _apply_trigram_similarity_filter(self, first_name, last_name)
         if first_name and last_name:
             return self.annotate(
-                _last_dist=RawSQL("(last_name <-> %s)", [last_name]),
-                _first_dist=RawSQL("(first_name <-> %s)", [first_name]),
+                _last_dist=TrigramDistance(F("last_name"), Value(last_name)),
+                _first_dist=TrigramDistance(F("first_name"), Value(first_name)),
             ).order_by("_last_dist", "_first_dist")
         if last_name:
-            return self.annotate(_dist=RawSQL("(last_name <-> %s)", [last_name])).order_by("_dist")
-        return self.annotate(_dist=RawSQL("(first_name <-> %s)", [first_name])).order_by("_dist")
+            return self.annotate(_dist=TrigramDistance(F("last_name"), Value(last_name))).order_by("_dist")
+        return self.annotate(_dist=TrigramDistance(F("first_name"), Value(first_name))).order_by("_dist")
 
     def search_legacy(
         self, first_name: str, last_name: str, date_of_birth: datetime.date | None = None
