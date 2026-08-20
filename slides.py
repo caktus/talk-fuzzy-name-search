@@ -461,6 +461,70 @@ def _():
 
 @app.cell
 def _():
+    """
+    Where does all this court data come from?
+
+    The production system searches 54 million+ real North Carolina court
+    records. We purchased that data from the state's courts -- the NC Courts
+    Remote Public Access Program (RPA extract access) -- the same public
+    channel attorneys already use to pull records. Keep it plain context:
+    no schemas, batch windows, or fee details.
+    """
+    mo.vstack(
+        [
+            mo.md("# Where the data comes from"),
+            mo.md("""
+    The system searches **54 million+ real North Carolina court records**.
+
+    We **purchased** that data from the state's courts -- the **NC Courts
+    Remote Public Access Program (RPA extract access)** -- the same public
+    channel attorneys use to pull records.
+
+    [NC Courts RPA extract access](https://www.nccourts.gov/services/remote-public-access-program/rpa-extract-access)
+    """),
+        ]
+    )
+    return
+
+
+@app.cell
+def _():
+    """
+    Why is the demo data simulated?
+
+    We can't show real people's names in a public talk -- that's private,
+    sensitive information. So the demo runs against a SIMULATED 54-million-
+    record dataset instead. A deterministic generator builds it: same seed,
+    same data, exactly reproducible. It mirrors the shape of the real data --
+    a heavy tail of name frequencies, and the same person appearing across
+    several slightly-different records (typos, nicknames, aliases).
+    """
+    mo.vstack(
+        [
+            mo.md("# Why the demo data is simulated"),
+            mo.md("""
+    We can't show real people's names in a public talk -- that's private,
+    sensitive information.
+
+    So this demo runs on a **simulated 54M-record dataset**, not real records.
+
+    A **deterministic generator** builds it: same seed -> same data, exactly
+    reproducible. It mirrors the *shape* of the real data:
+
+    - a **heavy-tailed** name distribution -- a few very common names, a long
+      tail of rare ones
+    - the same **duplication** pattern -- one person appears across several
+      slightly-different records (typos, nicknames, aliases)
+
+    None of it is a real person.
+    """),
+        ]
+    )
+    return
+
+
+@app.cell
+def _():
     # Exploring our Demo DB
     return
 
