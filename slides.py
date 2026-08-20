@@ -825,6 +825,135 @@ def _():
 
 @app.cell(hide_code=True)
 def _():
+    """
+    The Django-side payoff: the raw SQL functions become normal ORM querysets.
+    We wrap each PostgreSQL function as a tiny custom `Func` expression (the
+    function name plus its output field), and Django renders the SQL for us.
+    Trigrams are already built into Django; the other three are two-line
+    wrappers we add ourselves. All the code in these slides is verbatim from
+    the companion blog post, which uses `Person` as a stand-in for "your
+    model"; in this repo that model is `CourtRecord` (renamed from `Person`),
+    and every snippet below was run here against `CourtRecord`.
+    """
+    mo.md(r"""
+    # From raw SQL to the Django ORM
+
+    Wrap each PostgreSQL function as a tiny custom `Func` expression, then use
+    it in a normal queryset. Trigrams are **already built into Django**; the
+    other three are two-line wrappers we add.
+
+    > The code below is verbatim from the companion blog post, which uses
+    > `Person` as a stand-in for "your model". In this repo that model is
+    > **`CourtRecord`**; each snippet was run here against `CourtRecord`.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    """
+    These three live in records/expressions.py. Each is a two-line Func
+    subclass: the SQL function name and the field it returns. That's the entire
+    abstraction -- Django renders SOUNDEX(...), DAITCH_MOKOTOFF(...), and
+    levenshtein_less_equal(...) straight into the query. Trigrams need no
+    wrapper: django.contrib.postgres.search ships them.
+    """
+    mo.md(r"""
+    ```python
+    from django.contrib.postgres.fields import ArrayField
+    from django.db.models.expressions import Func
+    from django.db.models.fields import CharField, IntegerField, TextField
+
+
+    class Soundex(Func):
+        function = "SOUNDEX"
+        output_field = CharField()
+
+
+    class DaitchMokotoff(Func):
+        function = "DAITCH_MOKOTOFF"
+        output_field = ArrayField(TextField())
+
+
+    class LevenshteinLessEqual(Func):
+        function = "levenshtein_less_equal"
+        output_field = IntegerField()
+    ```
+
+    Trigrams are Django built-ins -- nothing to write:
+
+    ```python
+    from django.contrib.postgres.search import TrigramSimilarity, TrigramDistance
+    ```
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    """
+    One line per function. Soundex groups by the code the name sounds like; DM
+    matches on overlapping code arrays (that's the && behind __overlap); the
+    Levenshtein is a precision filter you AND on top, never a standalone search;
+    trigrams rank by distance and you take the top N. All four were run live in
+    the 54M demo -- the measured row counts are under each example.
+    """
+    mo.md(r"""
+    **Soundex** -- group names by the code they sound like:
+
+    ```python
+    from django.db.models import F, Value
+    from django.db.models.functions import Upper
+    from .expressions import Soundex
+
+    Person.objects.annotate(
+        last_sdx=Soundex(Upper(F("last_name")))
+    ).filter(last_sdx=Soundex(Value("Smyth")))
+    # matches Smith, Smyth, Smythe, and Smidt -- all code S530
+    ```
+    *Verified against `CourtRecord` in the 54M demo: 161,296 rows.*
+
+    **Daitch-Mokotoff** -- match on overlapping code arrays (`__overlap` is the `&&`):
+
+    ```python
+    from .expressions import DaitchMokotoff
+
+    Person.objects.annotate(
+        last_dm=DaitchMokotoff(Upper(F("last_name")))
+    ).filter(last_dm__overlap=["740000"])
+    # matches both Weiss and Weiß, which share code 740000
+    ```
+    *Verified against `CourtRecord` in the 54M demo: 487,874 rows.*
+
+    **Levenshtein** -- a precision filter on top of the broader matches:
+
+    ```python
+    from .expressions import LevenshteinLessEqual
+
+    Person.objects.annotate(
+        last_dist=LevenshteinLessEqual(Upper(F("last_name")), Value("SMYTH"), Value(2))
+    ).filter(last_dist__lte=2)
+    # keeps Smith (1), Smyth (0), Smythe (1); drops anything farther
+    ```
+    *Verified against `CourtRecord` in the 54M demo: 53,922 rows.*
+
+    **Trigrams** -- rank by closeness, take the top N:
+
+    ```python
+    from django.contrib.postgres.search import TrigramDistance
+
+    Person.objects.annotate(
+        last_dist=TrigramDistance(F("last_name"), Value("Smith"))
+    ).order_by("last_dist")[:20]
+    # the 20 closest last names to "Smith"
+    ```
+    *Verified against `CourtRecord` in the 54M demo: returns the 20 closest rows.*
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _():
     mo.md(r"""
     # Putting it together
 
