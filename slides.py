@@ -711,16 +711,13 @@ def _():
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    ### In Django, you don't write that SQL
+    ### Trigram support in Django
 
     `django.contrib.postgres.search` ships the trigram functions as built-in ORM
     expressions:
 
-    - `TrigramSimilarity` — wraps `similarity()`
-    - `TrigramDistance` — wraps the `<->` KNN distance operator
-
-    The demo's `Person.objects.search_trigram()` / `search_unified(["trigram"], …)`
-    use `TrigramDistance` under the hood (see `records/models.py`) — no raw SQL.
+    - `TrigramSimilarity` -- wraps `similarity()`
+    - `TrigramDistance` -- wraps the `<->` KNN distance operator
     """)
     return
 
