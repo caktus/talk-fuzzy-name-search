@@ -323,6 +323,41 @@ def _():
 @app.cell
 def _():
     """
+    Here's the concrete cost of that "fuzzy" problem. The portal has a
+    "sounds like" toggle. Turn it off and a name search returns a small,
+    correct set of records. Turn it on and that same search balloons to 200+
+    hits that are mostly false positives — and the portal hard-caps the list
+    at 200 records. So instead of helping, "sounds like" drowns attorneys in
+    irrelevant records and risks hiding the ones they actually need. This
+    screenshot makes that tradeoff tangible: our tool keeps recall high without
+    the noise.
+    """
+    # When the screenshot is ready, save it as visuals/portal-soundslike.png and
+    # swap the placeholder below for the mo.image call (uncomment this line):
+    # mo.image((visuals / "portal-soundslike.png").absolute(), width="100%")
+    mo.vstack(
+        [
+            mo.md("""
+        # The portal's "sounds like" search
+        """),
+            mo.md("""
+        ### 📸 Insert screenshot here
+
+        State portal "sounds like" results for one name — 200+ hits, mostly
+        false positives.
+
+        **To insert:** save the screenshot as `visuals/portal-soundslike.png`,
+        then replace this placeholder with
+        `mo.image((visuals / "portal-soundslike.png").absolute(), width="100%")`.
+        """),
+        ]
+    )
+    return
+
+
+@app.cell
+def _():
+    """
     So why is finding everyone so hard? In our case, we were dealing with a
     database of over 50 million North Carolina court records, and searching by
     name in a dataset that size is not trivial.
