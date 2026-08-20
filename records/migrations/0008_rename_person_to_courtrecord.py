@@ -4,18 +4,17 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('records', '0007_alter_person_person_id_and_more'),
+        ("records", "0007_alter_person_person_id_and_more"),
     ]
 
     operations = [
         migrations.RenameModel(
-            old_name='Person',
-            new_name='CourtRecord',
+            old_name="Person",
+            new_name="CourtRecord",
         ),
         migrations.AlterModelOptions(
-            name='courtrecord',
-            options={'verbose_name': 'Court Record', 'verbose_name_plural': 'Court Records'},
+            name="courtrecord",
+            options={"verbose_name": "Court Record", "verbose_name_plural": "Court Records"},
         ),
     ]
