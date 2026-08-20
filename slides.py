@@ -612,7 +612,7 @@ def _():
         last_name = models.CharField(max_length=50)
         middle_name = models.CharField(max_length=50, blank=True)
         date_of_birth = models.DateField()
-        # Often one doesn't have a cannonical person_id to
+        # Often one doesn't have a canonical person_id to
         # link rows that are actually the same person, but we
         # included one for demo purposes.
         person_id = UUIDField(
