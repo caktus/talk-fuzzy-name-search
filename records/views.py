@@ -15,9 +15,9 @@ from django.http import HttpRequest, HttpResponse
 from django.template.response import TemplateResponse
 from django.utils.dateparse import parse_date
 
-from .models import TRIGRAM_SIMILARITY_CUTOFF, Person, apply_levenshtein_filter, build_unified_filter
+from .models import TRIGRAM_SIMILARITY_CUTOFF, CourtRecord, apply_levenshtein_filter, build_unified_filter
 
-# Person.objects.count() is a full-table COUNT(*) -- on the 54M-row demo
+# CourtRecord.objects.count() is a full-table COUNT(*) -- on the 54M-row demo
 # table that's a ~600ms sequential-ish scan, and it's on every page load.
 # The exact number doesn't matter for the UI, so cache it via Django's
 # cache framework for a while instead of re-counting on every request.
@@ -26,10 +26,10 @@ _TOTAL_RECORDS_CACHE_SECONDS = 300
 
 
 def _cached_total_records() -> int:
-    """Return Person.objects.count(), cached for a few minutes."""
+    """Return CourtRecord.objects.count(), cached for a few minutes."""
     count = cache.get(_TOTAL_RECORDS_CACHE_KEY)
     if count is None:
-        count = Person.objects.count()
+        count = CourtRecord.objects.count()
         cache.set(_TOTAL_RECORDS_CACHE_KEY, count, _TOTAL_RECORDS_CACHE_SECONDS)
     return count
 
@@ -114,7 +114,7 @@ def _explain_queryset_for(modes: list[str], first_name: str, last_name: str, dat
         # search_unified() runs trigram as a separate KNN ORDER BY query,
         # even alongside other base modes — that's the query users care
         # about for trigram, so it is the deterministic primary to explain.
-        tri_qs = Person.objects
+        tri_qs = CourtRecord.objects
         if date_of_birth:
             tri_qs = tri_qs.filter(date_of_birth=date_of_birth)
         return tri_qs.trigram_ordered(first_name, last_name)[:100], "trigram"
@@ -123,10 +123,10 @@ def _explain_queryset_for(modes: list[str], first_name: str, last_name: str, dat
     if not q:
         if date_of_birth:
             # DOB-only path (unchanged): explain the bare DOB filter.
-            return Person.objects.filter(date_of_birth=date_of_birth)[:100], "main"
+            return CourtRecord.objects.filter(date_of_birth=date_of_birth)[:100], "main"
         return None, None
 
-    qs = Person.objects.filter(q)
+    qs = CourtRecord.objects.filter(q)
     if date_of_birth:
         qs = qs.filter(date_of_birth=date_of_birth)
     qs = qs.order_by("last_name", "first_name")
@@ -151,7 +151,7 @@ def _run_unified_search(modes: list[str], first_name: str, last_name: str, date_
         return {"results": [], "elapsed_ms": 0, "count": 0}
 
     start = time.perf_counter()
-    persons = Person.objects.search_unified(modes, first_name, last_name, date_of_birth)
+    persons = CourtRecord.objects.search_unified(modes, first_name, last_name, date_of_birth)
     elapsed_ms = (time.perf_counter() - start) * 1000
 
     # Capture executed SQL (connection.queries works when DEBUG=True)
@@ -188,7 +188,7 @@ def _run_unified_search(modes: list[str], first_name: str, last_name: str, date_
                        SOUNDEX(UPPER(p.last_name)),
                        DAITCH_MOKOTOFF(UPPER(p.first_name)),
                        DAITCH_MOKOTOFF(UPPER(p.last_name))
-                FROM records_person p
+                FROM records_courtrecord p
                 WHERE p.id = ANY(%s)
             """,
                 [ids],
@@ -406,7 +406,7 @@ def _generate_help_examples() -> dict:
     seen_dobs = set()
     with connection.cursor() as c:
         for _attempt in range(3):
-            c.execute("SELECT date_of_birth FROM records_person TABLESAMPLE SYSTEM (0.01) LIMIT 1000")
+            c.execute("SELECT date_of_birth FROM records_courtrecord TABLESAMPLE SYSTEM (0.01) LIMIT 1000")
             for (d,) in c.fetchall():
                 if d not in seen_dobs:
                     seen_dobs.add(d)
@@ -419,7 +419,7 @@ def _generate_help_examples() -> dict:
             # Tiny table: the page sample yielded too few DOBs, and a
             # full-table RANDOM() sort is cheap when the table is this
             # small (0.01% of its pages is under one page).
-            c.execute("SELECT date_of_birth FROM records_person ORDER BY RANDOM() LIMIT 100")
+            c.execute("SELECT date_of_birth FROM records_courtrecord ORDER BY RANDOM() LIMIT 100")
             for (d,) in c.fetchall():
                 if d not in seen_dobs:
                     seen_dobs.add(d)
@@ -431,7 +431,7 @@ def _generate_help_examples() -> dict:
         if sampled_dobs:
             placeholders = ", ".join(["%s"] * len(sampled_dobs))
             c.execute(
-                "SELECT date_of_birth, COUNT(*) FROM records_person "
+                "SELECT date_of_birth, COUNT(*) FROM records_courtrecord "
                 f"WHERE date_of_birth IN ({placeholders}) GROUP BY date_of_birth",
                 sampled_dobs,
             )
@@ -451,7 +451,7 @@ def _generate_help_examples() -> dict:
     with connection.cursor() as c:
         c.execute(
             """
-            SELECT first_name, last_name FROM records_person
+            SELECT first_name, last_name FROM records_courtrecord
             WHERE date_of_birth = %s
             ORDER BY RANDOM() LIMIT 5
         """,

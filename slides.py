@@ -29,7 +29,7 @@ with app.setup(hide_code=True):
     from django.db.models import TextField
     from django.db.models.functions import Cast
 
-    from records.models import Person
+    from records.models import CourtRecord
 
 
 @app.cell
@@ -467,10 +467,47 @@ def _():
 
 @app.cell(hide_code=True)
 def _():
+    """
+    Key conceptual point — slow down and make it explicit.
+
+    What we search is NOT a clean, unified "Person" table. It is a pile of
+    raw court records. Every time a person's name gets entered into the
+    courts — different county, different clerk, different year — a new row is
+    created. So the same real person shows up across many duplicated records,
+    often with typos, nicknames, and aliases.
+
+    That duplication is exactly why the search is hard: "Amanda Morgan" is
+    not one row we look up; it is a cluster of rows we have to find and
+    de-duplicate. We model each row as a CourtRecord, not a Person, on
+    purpose — the name is a reminder that these are raw captures, not a
+    canonical identity.
+    """
+    mo.vstack(
+        [
+            mo.md("# What a “record” actually is"),
+            mo.md("""
+    We do **not** search a unified *Person* table. We search **raw court
+    records** — one row per appearance of a person in the courts.
+
+    The same real person shows up across **many duplicated records**: different
+    counties, clerks, years, typos, nicknames, and aliases. So **one person →
+    many rows**, and a name like *Amanda Morgan* is a *cluster* of rows we must
+    find and de-duplicate — not a single row.
+
+    Each row is modeled as a **`CourtRecord`** (not `Person`) on purpose: the
+    name is a reminder that these are raw captures, not a canonical identity.
+    """),
+        ]
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _():
     mo.md(r"""
     ```python
-    class Person(models.Model):
-        "A person record for fuzzy name search."
+    class CourtRecord(models.Model):
+        "A single raw court record (one capture of a person, not a unified person)."
 
         first_name = models.CharField(max_length=50)
         last_name = models.CharField(max_length=50)
@@ -511,7 +548,7 @@ def qs_to_df(qs, cols=None):
 @app.cell
 def _():
     qs_to_df(
-        Person.objects.filter(
+        CourtRecord.objects.filter(
             first_name__iexact="amanda",
             last_name__iexact="morgan",
         )[:1000]
@@ -523,7 +560,7 @@ def _():
 @app.cell
 def _():
     qs_to_df(
-        Person.objects.filter(
+        CourtRecord.objects.filter(
             first_name__icontains="amanda",
             last_name__icontains="morgan",
             date_of_birth="1993-10-02",
@@ -535,7 +572,7 @@ def _():
 
 @app.cell
 def _():
-    qs_to_df(Person.objects.filter(person_id="d2a81060-fde2-8f0b-71ba-aa32e474a46b")[:100])
+    qs_to_df(CourtRecord.objects.filter(person_id="d2a81060-fde2-8f0b-71ba-aa32e474a46b")[:100])
     # Filtering by person_id, one additional row for "AMAANDA" is found
     return
 
@@ -547,7 +584,7 @@ def _():
         SELECT
             *
         FROM
-            records_person
+            records_courtrecord
         WHERE
             LOWER(first_name) LIKE '%am%nda%'
             AND LOWER(last_name) LIKE '%morgan%'
@@ -601,7 +638,7 @@ def _():
         SELECT
             *
         FROM
-            records_person
+            records_courtrecord
         WHERE
             soundex (first_name) = soundex ('amanda')
             AND LOWER(last_name) LIKE '%morgan%'
@@ -620,7 +657,7 @@ def _():
         SELECT
             *
         FROM
-            records_person
+            records_courtrecord
         WHERE
             soundex (first_name) = soundex ('amanda')
             AND soundex (last_name) = soundex ('morgan')
@@ -739,7 +776,7 @@ def _():
         SELECT
             *
         FROM
-            records_person
+            records_courtrecord
         WHERE
             -- Find similar-sounding first and last names
             daitch_mokotoff (upper(first_name)) && daitch_mokotoff ('AMANDA')

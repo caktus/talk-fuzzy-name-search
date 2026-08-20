@@ -49,7 +49,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import connection
 from faker import Faker
 
-from records.models import Person
+from records.models import CourtRecord
 from records.phonetics import NICKNAME_MAP
 
 # Generation rates
@@ -122,15 +122,15 @@ class Command(BaseCommand):
                 raise CommandError(f"Invalid --as-of date {options['as_of']!r}; expected YYYY-MM-DD") from None
 
         if flush:
-            deleted = Person.objects.count()
+            deleted = CourtRecord.objects.count()
             self._flush()
-            self.stdout.write(f"Flushed {deleted:,} existing records (TRUNCATE records_person RESTART IDENTITY)")
+            self.stdout.write(f"Flushed {deleted:,} existing records (TRUNCATE records_courtrecord RESTART IDENTITY)")
 
         self.stdout.write(f"Generating {count:,} person records (seed={rng_seed}, as-of={as_of})...")
         start = time.perf_counter()
         self._seed(count, rng_seed, as_of)
         elapsed = time.perf_counter() - start
-        total = Person.objects.count()
+        total = CourtRecord.objects.count()
         self.stdout.write(self.style.SUCCESS(f"Seeded {total:,} records in {elapsed:.1f}s"))
 
         # Post-seed sample cases are a full-table ORDER BY SOUNDEX sort plus
@@ -222,7 +222,7 @@ class Command(BaseCommand):
         start at id 1 instead of continuing the sequence.
         """
         with connection.cursor() as cursor:
-            cursor.execute("TRUNCATE records_person RESTART IDENTITY")
+            cursor.execute("TRUNCATE records_courtrecord RESTART IDENTITY")
 
     def _build_name_pool(self, pool_size: int, fake: Faker, rng: np.random.Generator) -> pl.DataFrame:
         """Build a pool of DISTINCT first/last name pairs.
@@ -465,7 +465,7 @@ class Command(BaseCommand):
                 break
 
             records = [
-                Person(
+                CourtRecord(
                     first_name=fn_arr[i],
                     last_name=ln_arr[i],
                     middle_name=None if mn_arr[i] is None else mn_arr[i],
@@ -475,7 +475,7 @@ class Command(BaseCommand):
                 )
                 for i in batch_indices
             ]
-            Person.objects.bulk_create(records)
+            CourtRecord.objects.bulk_create(records)
             inserted += len(records)
             self.stdout.write(f"    ... {inserted:,} / {total:,} records inserted")
 
@@ -535,7 +535,7 @@ class Command(BaseCommand):
         from django.db.models import Count
 
         large_clusters = (
-            Person.objects.values("person_id", "date_of_birth")
+            CourtRecord.objects.values("person_id", "date_of_birth")
             .annotate(cnt=Count("id"))
             .filter(cnt__gte=20)
             .order_by("-cnt")[:10]
@@ -544,7 +544,9 @@ class Command(BaseCommand):
         results = []
         for cluster in large_clusters:
             pid = cluster["person_id"]
-            records = list(Person.objects.filter(person_id=pid).values("first_name", "last_name", "date_of_birth")[:5])
+            records = list(
+                CourtRecord.objects.filter(person_id=pid).values("first_name", "last_name", "date_of_birth")[:5]
+            )
             results.append(
                 {
                     "person_id": str(pid),
@@ -581,7 +583,7 @@ class Command(BaseCommand):
                 SELECT p.first_name, p.last_name, p.date_of_birth,
                        SOUNDEX(UPPER(p.first_name)) as fn_soundex,
                        SOUNDEX(UPPER(p.last_name)) as ln_soundex
-                FROM records_person p
+                FROM records_courtrecord p
                 ORDER BY fn_soundex, ln_soundex
                 LIMIT 10000
             """)
@@ -622,14 +624,14 @@ class Command(BaseCommand):
             for nick in nicknames:
                 # Check if both canonical and nickname exist
                 canonical_recs = list(
-                    Person.objects.filter(first_name__iexact=canonical).values(
+                    CourtRecord.objects.filter(first_name__iexact=canonical).values(
                         "first_name", "last_name", "date_of_birth"
                     )[:2]
                 )
                 nick_recs = list(
-                    Person.objects.filter(first_name__iexact=nick).values("first_name", "last_name", "date_of_birth")[
-                        :2
-                    ]
+                    CourtRecord.objects.filter(first_name__iexact=nick).values(
+                        "first_name", "last_name", "date_of_birth"
+                    )[:2]
                 )
 
                 if canonical_recs and nick_recs:
