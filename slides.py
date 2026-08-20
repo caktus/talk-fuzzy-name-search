@@ -701,10 +701,27 @@ def _():
         -- Compares every 3 letter slices of both words, e.g., 'ger', 'era', 'ral', etc.,
         -- and calculates the ratio of shared trigrams to total unique trigrams.
         -- Scores range from 0 to 1
-        -- Two words with the same soundex code might have very low
+        -- Two words with the same soundex code might have very low trigram similarity
         """,
         engine=engine
     )
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ### In Django, you don't write that SQL
+
+    `django.contrib.postgres.search` ships the trigram functions as built-in ORM
+    expressions:
+
+    - `TrigramSimilarity` — wraps `similarity()`
+    - `TrigramDistance` — wraps the `<->` KNN distance operator
+
+    The demo's `Person.objects.search_trigram()` / `search_unified(["trigram"], …)`
+    use `TrigramDistance` under the hood (see `records/models.py`) — no raw SQL.
+    """)
     return
 
 
