@@ -7,13 +7,14 @@
 # fuzzystrmatch and pg_trgm contrib modules, and the service user `postgres`
 # is a superuser, so the app's `CREATE EXTENSION` migrations succeed.
 #
-# Pre-commit is intentionally NOT run as a separate job: its two meaningful
-# gates (ruff check/format, makemigrations --check) are covered by the
-# explicit steps below, `uv sync --frozen` already fails when uv.lock is
-# stale (covers the uv-lock hook), and the remaining `language: system`
-# hooks (missing-migrations) depend on runner-specific PATH/DB ordering,
-# which is flaky in CI. The rest (prettier/djlint/django-upgrade) are
-# style-only.
+# The full pre-commit suite runs over all files (uv-lock, missing-migrations,
+# ruff check+format, prettier, djlint, django-upgrade, and the standard
+# pre-commit-hooks checks) as the single lint/gate step. The missing-migrations
+# hook is a `language: system` hook that shells to `uv run manage.py
+# makemigrations --check`; it uses the synced venv (from the Install step) and
+# the job-level DATABASE_URL to import settings. `makemigrations --check` only
+# diffs models against migrations on disk and never opens a DB connection, so
+# it is not sensitive to Postgres service readiness.
 
 name: CI
 
@@ -55,24 +56,20 @@ jobs:
         with:
           python-version: "3.14"
 
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.0.1
 
-      # --frozen fails if uv.lock is out of sync with pyproject.toml (same
-      # guarantee as the uv-lock pre-commit hook); --all-groups installs the
-      # dev group (pytest, ruff, ...) -- in CI environments uv sync excludes
-      # dev groups unless explicitly requested.
+      # --frozen fails if uv.lock is out of sync with pyproject.toml;
+      # --all-groups installs the dev group (pytest, ruff, pre-commit, ...) --
+      # in CI environments uv sync excludes dev groups unless requested.
       - name: Install dependencies
         run: uv sync --frozen --all-groups
 
-      - name: Ruff (lint)
-        run: uv run ruff check .
-
-      - name: Ruff (format)
-        run: uv run ruff format --check .
-
-      # Same check pre-commit runs: fail if models drifted from migrations.
-      - name: Check for missing migrations
-        run: uv run python manage.py makemigrations --check --dry-run
+      # Full pre-commit gate over all files (see header note). Runs the
+      # missing-migrations system hook (needs the venv + job DATABASE_URL)
+      # plus every other hook: uv-lock, ruff, prettier, djlint, django-upgrade,
+      # and the pre-commit-hooks checks.
+      - name: Pre-commit
+        run: uv run pre-commit run --all-files
 
       # pytest-django creates its own test database (test_fuzzy_demo) from
       # scratch, proving the full 0001-0007 migration chain including

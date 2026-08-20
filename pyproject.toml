@@ -25,6 +25,7 @@ dev = [
     "pytest-django>=4.9",
     "factory-boy>=3.3",
     "ruff>=0.9",
+    "pre-commit>=4",
     "django-debug-toolbar>=7.0.0",
 ]
 
