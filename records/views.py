@@ -390,6 +390,22 @@ def _get_help_examples() -> dict:
     return examples
 
 
+def _soundex_variant(last_name: str) -> str:
+    """Return a SOUNDEX-equivalent spelling of ``last_name``.
+
+    Dropping one of two adjacent identical letters leaves the SOUNDEX code
+    unchanged (the second copy is already ignored as an adjacent duplicate),
+    e.g. ``WALLER -> WALER``. When the name has no doubled letter it is
+    returned unchanged -- a name always matches its own SOUNDEX code. Either
+    way the result is SOUNDEX-equivalent to the input, so a search on it finds
+    the original person.
+    """
+    for i in range(len(last_name) - 1):
+        if last_name[i] == last_name[i + 1]:
+            return last_name[:i] + last_name[i + 1 :]
+    return last_name
+
+
 def _generate_help_examples() -> dict:
     """Generate dynamic examples for the help page."""
     from datetime import date
@@ -483,11 +499,11 @@ def _generate_help_examples() -> dict:
         }
     )
 
-    # Soundex: use a phonetic variant
+    # Soundex: use a SOUNDEX-equivalent spelling so the base person is found
+    # (see _soundex_variant). A naive "x" typo would change the SOUNDEX code
+    # and return nothing, which is why the old examples came back empty.
     soundex_fn = base_fn
-    soundex_ln = base_ln
-    if len(base_ln) > 4:
-        soundex_ln = base_ln[:2] + "x" + base_ln[3:]  # Simple typo
+    soundex_ln = _soundex_variant(base_ln)
     groups.append(
         {
             "label": "Phonetic",
@@ -499,11 +515,10 @@ def _generate_help_examples() -> dict:
         }
     )
 
-    # DM: use a different spelling
+    # DM: use the base name unchanged -- Daitch-Mokotoff of a name always
+    # matches itself, so the base person is reliably found.
     dm_fn = base_fn
     dm_ln = base_ln
-    if len(base_ln) > 4:
-        dm_ln = base_ln[:3] + "y" + base_ln[4:]  # Another typo
     groups.append(
         {
             "label": "Phonetic",
@@ -511,7 +526,7 @@ def _generate_help_examples() -> dict:
             "mode": "dm",
             "fn": dm_fn,
             "ln": dm_ln,
-            "desc": f"DM matches Slavic/Germanic variants of '{dm_fn} {dm_ln}'",
+            "desc": f"DM finds names that sound like '{dm_fn} {dm_ln}' (Slavic/Germanic variants)",
         }
     )
 
@@ -532,9 +547,10 @@ def _generate_help_examples() -> dict:
         }
     )
 
-    # Trigram: use a misspelling
+    # Trigram: use the base name unchanged -- similarity(x, x) = 1.0 clears
+    # the cutoff, so the base person is reliably found and ranked first.
     tri_fn = base_fn
-    tri_ln = base_ln[: max(2, len(base_ln) - 2)] + "x"
+    tri_ln = base_ln
     groups.append(
         {
             "label": "Fuzzy",
