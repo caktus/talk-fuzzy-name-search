@@ -98,12 +98,12 @@ def _parse_explain_modes(request: HttpRequest) -> list[str]:
     return valid if valid else ["prefix"]
 
 
-def _explain_queryset_for(modes: list[str], first_name: str, last_name: str, date_of_birth=None):
+def _explain_queryset_for(modes: list[str], first_name: str, last_name: str, date_of_birth=None, sort_field=""):
     """Build the exact queryset search_unified() runs for this mode set.
 
     Returns (queryset, kind) where kind is "main" (the OR-ed filter query,
-    with the Levenshtein precision filter and DOB applied the same way
-    search_unified applies them) or "trigram" (the separate KNN
+    with the Levenshtein precision filter, DOB and page sort applied the
+    same way search_unified applies them) or "trigram" (the separate KNN
     ORDER BY ... LIMIT 100 query). Returns (None, None) when
     search_unified() would run no query at all (e.g. Levenshtein checked
     without any base mode and no DOB).
@@ -119,17 +119,19 @@ def _explain_queryset_for(modes: list[str], first_name: str, last_name: str, dat
             tri_qs = tri_qs.filter(date_of_birth=date_of_birth)
         return tri_qs.trigram_ordered(first_name, last_name)[:100], "trigram"
 
+    order_clause = (sort_field,) if sort_field else ()
+
     q = build_unified_filter(modes, first_name, last_name)
     if not q:
         if date_of_birth:
-            # DOB-only path (unchanged): explain the bare DOB filter.
-            return CourtRecord.objects.filter(date_of_birth=date_of_birth)[:100], "main"
+            # DOB-only path: explain the bare DOB filter (+ page sort).
+            return CourtRecord.objects.filter(date_of_birth=date_of_birth).order_by(*order_clause)[:100], "main"
         return None, None
 
     qs = CourtRecord.objects.filter(q)
     if date_of_birth:
         qs = qs.filter(date_of_birth=date_of_birth)
-    qs = qs.order_by("last_name", "first_name")
+    qs = qs.order_by(*order_clause)
     if "levenshtein" in modes:
         qs = apply_levenshtein_filter(qs, first_name, last_name)
     return qs[:100], "main"
@@ -145,13 +147,20 @@ def _get_enabled_modes(request: HttpRequest) -> list[str]:
     return enabled if enabled else list(DEFAULT_MODES)
 
 
-def _run_unified_search(modes: list[str], first_name: str, last_name: str, date_of_birth=None) -> dict:
+# Values for the ?sort= URL parameter on the results table headers.
+SORT_PARAMS = {"dob_asc": "date_of_birth", "dob_desc": "-date_of_birth"}
+
+
+def _run_unified_search(modes: list[str], first_name: str, last_name: str, date_of_birth=None, sort_param="") -> dict:
     """Execute a unified search with multiple modes and return annotated results."""
     if not first_name and not last_name and not date_of_birth:
         return {"results": [], "elapsed_ms": 0, "count": 0}
 
+    # The base query runs without a default ORDER BY (fast plan); the page
+    # sort is a user choice applied as a SQL ORDER BY on that query.
+    sort_field = SORT_PARAMS.get(sort_param, "")
     start = time.perf_counter()
-    records = CourtRecord.objects.search_unified(modes, first_name, last_name, date_of_birth)
+    records = CourtRecord.objects.search_unified(modes, first_name, last_name, date_of_birth, sort_field)
     elapsed_ms = (time.perf_counter() - start) * 1000
 
     # Capture executed SQL (connection.queries works when DEBUG=True)
@@ -329,8 +338,12 @@ def _search_response(request: HttpRequest) -> HttpResponse:
     first_name = request.GET.get("first_name", "").strip()
     last_name = request.GET.get("last_name", "").strip()
     date_of_birth = parse_date(request.GET.get("date_of_birth", "").strip())
+    sort_param = request.GET.get("sort", "")
 
-    context = _run_unified_search(enabled_modes, first_name, last_name, date_of_birth)
+    context = _run_unified_search(enabled_modes, first_name, last_name, date_of_birth, sort_param)
+    context["sort"] = sort_param
+    # DOB header click toggles asc/desc (unsorted -> asc).
+    context["next_sort"] = "dob_desc" if sort_param == "dob_asc" else "dob_asc"
     mode_sql = {m: _mode_sql(m, first_name, last_name, m in enabled_modes) for m in SEARCH_MODES}
     phonetic_codes = _get_phonetic_codes(first_name, last_name)
     context.update(
@@ -593,6 +606,7 @@ def search_explain(request: HttpRequest) -> HttpResponse:
     first_name = request.GET.get("first_name", "").strip()
     last_name = request.GET.get("last_name", "").strip()
     date_of_birth = parse_date(request.GET.get("date_of_birth", "").strip())
+    sort_field = SORT_PARAMS.get(request.GET.get("sort", ""), "")
 
     context = {
         "plan": None,
@@ -611,7 +625,7 @@ def search_explain(request: HttpRequest) -> HttpResponse:
         context["error"] = "Provide a first_name, last_name, and/or date_of_birth to explain a query."
         return TemplateResponse(request, "records/explain.html", context)
 
-    qs, kind = _explain_queryset_for(modes, first_name, last_name, date_of_birth)
+    qs, kind = _explain_queryset_for(modes, first_name, last_name, date_of_birth, sort_field)
 
     if qs is None:
         context["error"] = (

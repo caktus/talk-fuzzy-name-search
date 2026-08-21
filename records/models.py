@@ -358,6 +358,7 @@ class CourtRecordQuerySet(models.QuerySet):
         first_name: str,
         last_name: str,
         date_of_birth: datetime.date | None = None,
+        sort_field: str = "",
     ) -> list[CourtRecord]:
         """Unified search combining multiple algorithms (OR-ed Q object; trigram rows merged in Python from a separate KNN query).
 
@@ -371,11 +372,17 @@ class CourtRecordQuerySet(models.QuerySet):
         'William' (distance 4). See RECS-2026-08-14 P1-12 — nickname support
         would require variant-aware filtering.
 
+        There is no default ordering: with sort_field empty the rows come
+        back in DB order and the page sort (e.g. ?sort=dob_asc) is passed in
+        as sort_field and applied as a SQL ORDER BY on the base query.
+
         Args:
             modes: List of enabled mode names (e.g., ['prefix', 'soundex']).
             first_name: First name to search for.
             last_name: Last name to search for.
             date_of_birth: Optional DOB filter applied to all modes.
+            sort_field: Optional order_by field for the base query (e.g.
+                'date_of_birth' or '-date_of_birth'); empty = no ORDER BY.
 
         Returns:
             A list of CourtRecord objects (deduplicated, limited to 100). Every path
@@ -394,6 +401,10 @@ class CourtRecordQuerySet(models.QuerySet):
         # use the exact same query construction as the search that ran.
         q = build_unified_filter(modes, first_name, last_name)
 
+        # Page sort (e.g. ?sort=dob_asc) applied as a SQL ORDER BY on the
+        # base query; empty = no ORDER BY (fastest plan, DB order).
+        order_clause = (sort_field,) if sort_field else ()
+
         if not q and "trigram" not in modes:
             # No base mode could build a condition (e.g. only Levenshtein is
             # checked). Levenshtein is a precision filter on top of base
@@ -401,17 +412,15 @@ class CourtRecordQuerySet(models.QuerySet):
             # back to the bare DOB set — that would silently ignore the name.
             # Only a nameless DOB search returns the DOB-filtered set.
             if date_of_birth and not first_name and not last_name:
-                return list(self.filter(date_of_birth=date_of_birth)[:100])
+                return list(self.filter(date_of_birth=date_of_birth).order_by(*order_clause)[:100])
             return []
 
         # Build main queryset
         qs = self.filter(q)
         if date_of_birth:
             qs = qs.filter(date_of_birth=date_of_birth)
-        # Explicit, stable ordering for the main list (B6): the page must not
-        # render in arbitrary DB order. Rides the (last_name, first_name)
-        # composite index, so the ORDER BY + LIMIT stays cheap.
-        qs = qs.order_by("last_name", "first_name")
+        if order_clause:
+            qs = qs.order_by(*order_clause)
 
         # Levenshtein as a precision filter (AND) on top of the other modes
         if "levenshtein" in modes:
@@ -504,6 +513,17 @@ class CourtRecordQuerySet(models.QuerySet):
                     main_ids.add(obj.id)
                     if len(main_list) >= 100:
                         break
+
+        # Without a page sort, trigram rows (KNN distance order) are appended
+        # after the base rows. With a page sort (e.g. DOB), the top-up rows
+        # would break the page order, so the merged list is re-sorted — a
+        # cheap Python sort over at most 100 already-fetched rows; the base
+        # query's SQL ORDER BY still does the heavy lifting (cheap sort
+        # input before LIMIT).
+        if order_clause:
+            descending = order_clause[0].startswith("-")
+            field = order_clause[0].lstrip("-")
+            main_list.sort(key=lambda r: getattr(r, field), reverse=descending)
 
         return main_list
 

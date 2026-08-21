@@ -276,7 +276,7 @@ class TestTrigramVisibility:
             names = {p.last_name for p in results}
             assert not names & set(self.NEAR_NAMES)
 
-    def test_no_trigram_keeps_full_base_page_and_order(self):
+    def test_no_trigram_keeps_full_base_page(self):
         """Without trigram the base list keeps the full 100-row page."""
         dob = date(1990, 1, 1)
         expected_smith = [(f"First{i:02d}", "Smith") for i in range(70)]
@@ -286,20 +286,58 @@ class TestTrigramVisibility:
             CourtRecord.objects.create(first_name=first, last_name=last, date_of_birth=dob)
         results = CourtRecord.objects.search_unified(["legacy"], "", "smith")
         assert len(results) == 100
-        assert [(p.first_name, p.last_name) for p in results] == expected[:100]
+        # No default ORDER BY: assert the page contents, not a specific order
+        # (a tie on LIMIT 100 can land on any subset). Smith has only 70
+        # rows, so the page must always include at least 30 Smithers rows.
+        assert {p.last_name for p in results} == {"Smith", "Smithers"}
+        assert sum(1 for p in results if p.last_name == "Smithers") >= 30
 
-    def test_main_list_ordered_by_last_then_first_name(self):
-        """The main list is ordered by (last_name, first_name), not DB order."""
+    def test_main_list_has_no_default_ordering(self):
+        """search_unified() runs without a default ORDER BY; page sort is the view's job."""
         dob = date(1990, 1, 1)
         for first, last in [("Zed", "Zebra"), ("Ike", "Cherry"), ("Amy", "Apple"), ("Bob", "Berry")]:
             CourtRecord.objects.create(first_name=first, last_name=last, date_of_birth=dob)
         results = CourtRecord.objects.search_unified(["legacy"], "", "e")
-        assert [(p.first_name, p.last_name) for p in results] == [
+        assert {(p.first_name, p.last_name) for p in results} == {
             ("Amy", "Apple"),
             ("Bob", "Berry"),
             ("Ike", "Cherry"),
             ("Zed", "Zebra"),
-        ]
+        }
+
+
+class TestSearchUnifiedSortField:
+    """The page sort is a SQL ORDER BY on the base query (sort_field)."""
+
+    def _seed(self):
+        # Shuffled DOBs so order is observable
+        for first, dob in [("Zed", "1992-06-15"), ("Ike", "1988-01-01"), ("Amy", "1995-12-31"), ("Bob", "1990-05-15")]:
+            CourtRecord.objects.create(first_name=first, last_name="Smith", date_of_birth=dob)
+
+    def test_sort_field_runs_sql_order_by(self):
+        """The ORDER BY is in the SQL the base query executes, not Python."""
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        self._seed()
+        with CaptureQueriesContext(connection) as ctx:
+            results = CourtRecord.objects.search_unified(["prefix"], "", "Smith", sort_field="-date_of_birth")
+        main_sql = next(q["sql"] for q in ctx.captured_queries if "records_courtrecord" in q["sql"])
+        assert 'ORDER BY "records_courtrecord"."date_of_birth" DESC' in main_sql
+        # Results come back already sorted by the DB
+        assert [p.first_name for p in results] == ["Amy", "Zed", "Bob", "Ike"]
+
+    def test_sort_field_asc(self):
+        self._seed()
+        results = CourtRecord.objects.search_unified(["prefix"], "", "Smith", sort_field="date_of_birth")
+        assert [p.first_name for p in results] == ["Ike", "Bob", "Zed", "Amy"]
+
+    def test_dob_only_search_sorted(self):
+        dob = date(1990, 1, 1)
+        for last, other_dob in [("A", dob), ("B", dob), ("C", dob)]:
+            CourtRecord.objects.create(first_name="John", last_name=last, date_of_birth=other_dob)
+        results = CourtRecord.objects.search_unified([], "", "", dob, sort_field="first_name")
+        assert [p.last_name for p in results] == ["A", "B", "C"]
 
 
 class TestSearchUnifiedCap:

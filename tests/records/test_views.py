@@ -144,6 +144,61 @@ class TestSearchByDateOfBirth:
         assert response.status_code == 200
 
 
+class TestSearchSortByDateOfBirth:
+    """Test that ?sort=dob_asc/dob_desc orders results by DOB in SQL."""
+
+    @pytest.fixture(autouse=True)
+    def _seed_data(self):
+        # Shuffled DOBs so order is observable
+        for first, last, dob in [
+            ("Zed", "Smith", "1992-06-15"),
+            ("Ike", "Smith", "1988-01-01"),
+            ("Amy", "Smith", "1995-12-31"),
+            ("Bob", "Smith", "1990-05-15"),
+        ]:
+            CourtRecord.objects.create(first_name=first, last_name=last, date_of_birth=dob)
+
+    def test_dob_asc_sorts_ascending(self, client):
+        response = client.get("/search/?last_name=Smith&sort=dob_asc")
+        assert response.status_code == 200
+        results = response.context["results"]
+        dobs = [r["person"].date_of_birth for r in results]
+        assert dobs == sorted(dobs)
+        assert [r["person"].first_name for r in results] == ["Ike", "Bob", "Zed", "Amy"]
+
+    def test_dob_desc_sorts_descending(self, client):
+        response = client.get("/search/?last_name=Smith&sort=dob_desc")
+        assert response.status_code == 200
+        results = response.context["results"]
+        dobs = [r["person"].date_of_birth for r in results]
+        assert dobs == sorted(dobs, reverse=True)
+        assert [r["person"].first_name for r in results] == ["Amy", "Zed", "Bob", "Ike"]
+
+    def test_no_sort_param_keeps_db_order(self, client):
+        response = client.get("/search/?last_name=Smith")
+        assert response.status_code == 200
+        assert response.context["sort"] == ""
+        assert len(response.context["results"]) == 4
+
+    def test_unknown_sort_param_is_ignored(self, client):
+        response = client.get("/search/?last_name=Smith&sort=bogus")
+        assert response.status_code == 200
+        assert response.context["sort"] == "bogus"
+        assert len(response.context["results"]) == 4
+
+    def test_sort_shows_up_in_explained_sql(self, client):
+        """The EXPLAIN endpoint reflects the page sort, so it explains the query that ran."""
+        explain = client.get("/search/explain/?last_name=Smith&sort=dob_asc")
+        assert explain.status_code == 200
+        assert "ORDER BY" in explain.context["sql"]
+        assert "date_of_birth" in explain.context["sql"].split("ORDER BY")[-1]
+
+    def test_explained_sql_has_no_order_by_without_sort(self, client):
+        explain = client.get("/search/explain/?last_name=Smith")
+        assert explain.status_code == 200
+        assert "ORDER BY" not in explain.context["sql"]
+
+
 class TestSearchExactQuerySet:
     """Test the search_exact QuerySet method."""
 
