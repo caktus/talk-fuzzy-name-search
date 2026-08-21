@@ -78,18 +78,32 @@ cd ..
 ```
 
 # Migrate + seed a fast local dataset (under a minute)
+
 uv run python manage.py migrate
+
+# Reverse migrations to save time while creating data
+
+uv run python manage.py migrate records 0002
+
+# Create fake data
+
 uv run python manage.py seed_data --count 100000 --flush --seed 42 --as-of 2026-01-01
+
 # Full 54M stage dataset. Rreference runs:
+
 # ~100 min on a 40 GB Linux VM w/ PCIe 5.0 X4 NVME
+
 # ~4 hours on a 36 GB MacBook Pro M3 Max (2023)
+
 # uv run python manage.py seed_data --count 54000000 --flush --seed 42 --as-of 2026-01-01
 
 # Run
-uv run python manage.py runserver    # Web demo (localhost:8000)
-uv run marimo edit demo.py           # Interactive notebook
-uv run pytest tests/                 # Test suite
-```
+
+uv run python manage.py runserver # Web demo (localhost:8000)
+uv run marimo edit demo.py # Interactive notebook
+uv run pytest tests/ # Test suite
+
+````
 
 The pre-rewrite CSV pipeline lives in `scripts/legacy/` for reference; it is
 not part of this flow (see `scripts/legacy/README.md`).
@@ -100,7 +114,7 @@ Running the slides locally:
 
 ```bash
 uv run marimo edit --watch --no-token slides.py
-```
+````
 
 With a token (and listen on local network):
 
