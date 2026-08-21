@@ -62,6 +62,7 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/fuzzy_demo
 DEBUG=True
 DJANGO_SECRET_KEY=django-insecure-demo-key-change-in-production
 EOF
+```
 
 ### Seeding with real name data
 
