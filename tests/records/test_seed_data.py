@@ -391,7 +391,7 @@ class TestBulkInsert:
         # the log is being populated.
         connection.force_debug_cursor = True
         try:
-            Person.objects.count()
+            CourtRecord.objects.count()
             assert len(original_log) >= 1
 
             # Capture what the log is while an insert runs.
@@ -412,7 +412,7 @@ class TestBulkInsert:
         finally:
             connection.force_debug_cursor = False
 
-        assert Person.objects.count() == len(expanded)
+        assert CourtRecord.objects.count() == len(expanded)
         # During inserts the log was a minimal deque, not the original.
         assert seen["log"] is not original_log
         assert seen["log"].maxlen == 1
@@ -577,10 +577,10 @@ class TestFlush:
 
         assert CourtRecord.objects.count() == 0
         with connection.cursor() as cursor:
-            # The id sequence keeps its pre-rename name (Django's RenameModel
-            # renames the table, not the owned sequence), so it is still
-            # records_person_id_seq even though the table is records_courtrecord.
-            cursor.execute("SELECT last_value FROM records_person_id_seq")
+            # The migrations were recreated from scratch (0001 creates
+            # CourtRecord directly), so the id sequence is the default
+            # records_courtrecord_id_seq.
+            cursor.execute("SELECT last_value FROM records_courtrecord_id_seq")
             assert cursor.fetchone()[0] == 1
         # A fresh insert gets id 1 again (with DELETE the sequence would keep
         # advancing past first.id + 1).
