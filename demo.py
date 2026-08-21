@@ -32,7 +32,7 @@ def _(mo):
     full-text search doesn't handle name nuances well, and unindexed fuzzy
     matching won't scale.
 
-    **Solution:** One unified API -- `Person.objects.search_unified(modes, first, last, dob)` --
+    **Solution:** One unified API -- `CourtRecord.objects.search_unified(modes, first, last, dob)` --
     with independently toggleable modes: exact prefix, legacy LIKE, Soundex,
     Daitch-Mokotoff, and trigram (pg_trgm KNN). Levenshtein (edit distance <= 2)
     is not a standalone mode; it is a precision filter applied on top of the base
@@ -65,7 +65,7 @@ def _():
     if not apps.ready:
         django.setup()
 
-    from records.models import Person
+    from records.models import CourtRecord
 
     # Match-source bitmask -- same values as the web UI (records/views.py MATCH_BITS)
     MATCH_BITS = {"prefix": 1, "legacy": 2, "soundex": 4, "dm": 16, "trigram": 32}
@@ -76,7 +76,7 @@ def _():
         return ", ".join(name for name, bit in MATCH_BITS.items() if source & bit)
 
     def persons_to_df(rows, fields=None):
-        """List of Person objects from search_unified() -> DataFrame."""
+        """List of CourtRecord objects from search_unified() -> DataFrame."""
         if not rows:
             return pd.DataFrame()
         df = pd.DataFrame([{k: v for k, v in r.__dict__.items() if k != "_state"} for r in rows])
@@ -101,13 +101,13 @@ def _():
             self.elapsed_ms = (self.end - self.start) * 1000
             print(f"Elapsed time{' [' + self.label + ']' if self.label else ''}: {self.elapsed_ms:.2f} ms")
 
-    return MillisecondTimer, Person, MATCH_BITS, persons_to_df, sync_to_async
+    return MillisecondTimer, CourtRecord, MATCH_BITS, persons_to_df, sync_to_async
 
 
 @app.cell
-async def _(MillisecondTimer, Person, mo):
+async def _(MillisecondTimer, CourtRecord, mo):
     with MillisecondTimer():
-        total = await Person.objects.acount()
+        total = await CourtRecord.objects.acount()
     mo.md(f"**Database:** {total:,} person records loaded")
     return
 
@@ -123,23 +123,23 @@ def _(mo):
 
 
 @app.cell
-async def _(MillisecondTimer, Person, mo, persons_to_df, sync_to_async):
+async def _(MillisecondTimer, CourtRecord, mo, persons_to_df, sync_to_async):
     # The user typed "Smyth" -- a typo for "Smith".
     with MillisecondTimer("search_unified(prefix)"):
         prefix_rows = await sync_to_async(
-            lambda: Person.objects.search_unified(["prefix"], "John", "Smyth"),
+            lambda: CourtRecord.objects.search_unified(["prefix"], "John", "Smyth"),
             thread_sensitive=True,
         )()
 
     with MillisecondTimer("search_unified(legacy)"):
         legacy_rows = await sync_to_async(
-            lambda: Person.objects.search_unified(["legacy"], "John", "Smyth"),
+            lambda: CourtRecord.objects.search_unified(["legacy"], "John", "Smyth"),
             thread_sensitive=True,
         )()
 
     with MillisecondTimer("search_unified(soundex + levenshtein)"):
         fuzzy_rows = await sync_to_async(
-            lambda: Person.objects.search_unified(["soundex", "levenshtein"], "John", "Smyth"),
+            lambda: CourtRecord.objects.search_unified(["soundex", "levenshtein"], "John", "Smyth"),
             thread_sensitive=True,
         )()
 
@@ -190,11 +190,11 @@ def _(mo):
 
 
 @app.cell
-async def _(MillisecondTimer, Person, mo, persons_to_df, sync_to_async):
+async def _(MillisecondTimer, CourtRecord, mo, persons_to_df, sync_to_async):
     # Earliest JOHN SMITH DOB in the table -- stable anchor for the demo.
     anchor_dob = await sync_to_async(
         lambda: (
-            Person.objects.filter(first_name="JOHN", last_name="SMITH")
+            CourtRecord.objects.filter(first_name="JOHN", last_name="SMITH")
             .order_by("date_of_birth")
             .values_list("date_of_birth", flat=True)
             .first()
@@ -204,7 +204,7 @@ async def _(MillisecondTimer, Person, mo, persons_to_df, sync_to_async):
 
     with MillisecondTimer(f"search_unified(soundex + levenshtein, DOB {anchor_dob})"):
         anchor_rows = await sync_to_async(
-            lambda: Person.objects.search_unified(["soundex", "levenshtein"], "John", "Smyth", anchor_dob),
+            lambda: CourtRecord.objects.search_unified(["soundex", "levenshtein"], "John", "Smyth", anchor_dob),
             thread_sensitive=True,
         )()
 
@@ -269,7 +269,7 @@ def _(mo):
 @app.cell
 async def _(
     MillisecondTimer,
-    Person,
+    CourtRecord,
     dob_input,
     first_name_input,
     last_name_input,
@@ -306,7 +306,7 @@ async def _(
 
     with MillisecondTimer(f"search_unified({q_modes})"):
         unified_rows = await sync_to_async(
-            lambda: Person.objects.search_unified(q_modes, q_first, q_last, q_dob),
+            lambda: CourtRecord.objects.search_unified(q_modes, q_first, q_last, q_dob),
             thread_sensitive=True,
         )()
 
@@ -354,7 +354,7 @@ def _(mo):
 
 
 @app.cell
-async def _(MillisecondTimer, Person, name_query, pd, sync_to_async):
+async def _(MillisecondTimer, CourtRecord, name_query, pd, sync_to_async):
     from django.db.models.expressions import RawSQL
 
     target = name_query.value.strip() or "Smith"
@@ -367,7 +367,7 @@ async def _(MillisecondTimer, Person, name_query, pd, sync_to_async):
         from records.models import TRIGRAM_SIMILARITY_CUTOFF
 
         qs = (
-            Person.objects.annotate(
+            CourtRecord.objects.annotate(
                 similarity=RawSQL("similarity(last_name, %s)", [name]),
                 distance=RawSQL("last_name <-> %s", [name]),
             )
@@ -443,14 +443,14 @@ def _(mo):
 
 
 @app.cell
-async def _(MillisecondTimer, Person, bench_first, bench_last, mo, persons_to_df, sync_to_async):
+async def _(MillisecondTimer, CourtRecord, bench_first, bench_last, mo, persons_to_df, sync_to_async):
     b1_first = bench_first.value.strip()
     b1_last = bench_last.value.strip()
 
     if b1_first and b1_last:
         with MillisecondTimer("search_unified(legacy)"):
             bench_legacy_rows = await sync_to_async(
-                lambda: Person.objects.search_unified(["legacy"], b1_first, b1_last),
+                lambda: CourtRecord.objects.search_unified(["legacy"], b1_first, b1_last),
                 thread_sensitive=True,
             )()
     else:
@@ -464,14 +464,14 @@ async def _(MillisecondTimer, Person, bench_first, bench_last, mo, persons_to_df
 
 
 @app.cell
-async def _(MillisecondTimer, Person, bench_first, bench_last, mo, persons_to_df, sync_to_async):
+async def _(MillisecondTimer, CourtRecord, bench_first, bench_last, mo, persons_to_df, sync_to_async):
     b2_first = bench_first.value.strip()
     b2_last = bench_last.value.strip()
 
     if b2_first and b2_last:
         with MillisecondTimer("search_unified(soundex + levenshtein)"):
             bench_fuzzy_rows = await sync_to_async(
-                lambda: Person.objects.search_unified(["soundex", "levenshtein"], b2_first, b2_last),
+                lambda: CourtRecord.objects.search_unified(["soundex", "levenshtein"], b2_first, b2_last),
                 thread_sensitive=True,
             )()
     else:

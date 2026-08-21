@@ -3,14 +3,14 @@
 import factory
 from factory.django import DjangoModelFactory
 
-from records.models import Person
+from records.models import CourtRecord
 
 
-class PersonFactory(DjangoModelFactory):
-    """Factory for generating Person test records."""
+class CourtRecordFactory(DjangoModelFactory):
+    """Factory for generating CourtRecord test records."""
 
     class Meta:
-        model = Person
+        model = CourtRecord
         django_get_or_create = ("first_name", "last_name", "date_of_birth")
 
     first_name = factory.Faker("first_name")

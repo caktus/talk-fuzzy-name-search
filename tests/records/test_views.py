@@ -11,15 +11,15 @@ from django.core.cache import cache
 from django.db import connection
 from django.test import override_settings
 
-from records.models import Person
+from records.models import CourtRecord
 
 pytestmark = pytest.mark.django_db
 
-# EXPLAIN plans render table scans as "Seq Scan on records_person" and index
-# scans as "Index Scan using <index> on records_person" (or Bitmap variants
+# EXPLAIN plans render table scans as "Seq Scan on records_courtrecord" and index
+# scans as "Index Scan using <index> on records_courtrecord" (or Bitmap variants
 # for GIN/GiST); the scan node is what a valid mode's plan must contain.
 _SCAN_NODE_RE = re.compile(
-    r"(Seq Scan|Index Scan|Index Only Scan|Bitmap Heap Scan)( using [A-Za-z_0-9]+)? on records_person"
+    r"(Seq Scan|Index Scan|Index Only Scan|Bitmap Heap Scan)( using [A-Za-z_0-9]+)? on records_courtrecord"
 )
 
 
@@ -29,17 +29,17 @@ class TestSearchModes:
     @pytest.fixture(autouse=True)
     def _seed_data(self):
         """Create test data: exact match + typo variant."""
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="John",
             last_name="Smith",
             date_of_birth="1990-05-15",
         )
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="Jonh",
             last_name="Smyth",
             date_of_birth="1985-03-20",
         )
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="Alice",
             last_name="Jones",
             date_of_birth="1992-11-01",
@@ -83,19 +83,19 @@ class TestSearchByDateOfBirth:
 
     @pytest.fixture(autouse=True)
     def _seed_data(self):
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="John",
             last_name="Smith",
             date_of_birth="1990-05-15",
         )
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="John",
             last_name="Smith",
             date_of_birth="1985-03-20",
         )
         # Shares the queried DOB with the first John — a DOB-only fallback
         # (B1) would leak this row into name searches.
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="Robert",
             last_name="Jones",
             date_of_birth="1990-05-15",
@@ -144,17 +144,72 @@ class TestSearchByDateOfBirth:
         assert response.status_code == 200
 
 
+class TestSearchSortByDateOfBirth:
+    """Test that ?sort=dob_asc/dob_desc orders results by DOB in SQL."""
+
+    @pytest.fixture(autouse=True)
+    def _seed_data(self):
+        # Shuffled DOBs so order is observable
+        for first, last, dob in [
+            ("Zed", "Smith", "1992-06-15"),
+            ("Ike", "Smith", "1988-01-01"),
+            ("Amy", "Smith", "1995-12-31"),
+            ("Bob", "Smith", "1990-05-15"),
+        ]:
+            CourtRecord.objects.create(first_name=first, last_name=last, date_of_birth=dob)
+
+    def test_dob_asc_sorts_ascending(self, client):
+        response = client.get("/search/?last_name=Smith&sort=dob_asc")
+        assert response.status_code == 200
+        results = response.context["results"]
+        dobs = [r["person"].date_of_birth for r in results]
+        assert dobs == sorted(dobs)
+        assert [r["person"].first_name for r in results] == ["Ike", "Bob", "Zed", "Amy"]
+
+    def test_dob_desc_sorts_descending(self, client):
+        response = client.get("/search/?last_name=Smith&sort=dob_desc")
+        assert response.status_code == 200
+        results = response.context["results"]
+        dobs = [r["person"].date_of_birth for r in results]
+        assert dobs == sorted(dobs, reverse=True)
+        assert [r["person"].first_name for r in results] == ["Amy", "Zed", "Bob", "Ike"]
+
+    def test_no_sort_param_keeps_db_order(self, client):
+        response = client.get("/search/?last_name=Smith")
+        assert response.status_code == 200
+        assert response.context["sort"] == ""
+        assert len(response.context["results"]) == 4
+
+    def test_unknown_sort_param_is_ignored(self, client):
+        response = client.get("/search/?last_name=Smith&sort=bogus")
+        assert response.status_code == 200
+        assert response.context["sort"] == "bogus"
+        assert len(response.context["results"]) == 4
+
+    def test_sort_shows_up_in_explained_sql(self, client):
+        """The EXPLAIN endpoint reflects the page sort, so it explains the query that ran."""
+        explain = client.get("/search/explain/?last_name=Smith&sort=dob_asc")
+        assert explain.status_code == 200
+        assert "ORDER BY" in explain.context["sql"]
+        assert "date_of_birth" in explain.context["sql"].split("ORDER BY")[-1]
+
+    def test_explained_sql_has_no_order_by_without_sort(self, client):
+        explain = client.get("/search/explain/?last_name=Smith")
+        assert explain.status_code == 200
+        assert "ORDER BY" not in explain.context["sql"]
+
+
 class TestSearchExactQuerySet:
     """Test the search_exact QuerySet method."""
 
     @pytest.fixture(autouse=True)
     def _seed_data(self):
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="John",
             last_name="Smith",
             date_of_birth="1990-05-15",
         )
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="Jonh",
             last_name="Smyth",
             date_of_birth="1985-03-20",
@@ -162,18 +217,18 @@ class TestSearchExactQuerySet:
 
     def test_search_exact_finds_prefix_match(self):
         """search_exact finds prefix matches."""
-        results = list(Person.objects.search_exact("John", "Smith"))
+        results = list(CourtRecord.objects.search_exact("John", "Smith"))
         assert len(results) == 1
         assert results[0].first_name == "John"
 
     def test_search_exact_case_insensitive(self):
         """search_exact is case-insensitive."""
-        results = list(Person.objects.search_exact("john", "smith"))
+        results = list(CourtRecord.objects.search_exact("john", "smith"))
         assert len(results) == 1
 
     def test_search_exact_no_typo_tolerance(self):
         """search_exact does not tolerate typos."""
-        results = list(Person.objects.search_exact("Jonn", "Smit"))
+        results = list(CourtRecord.objects.search_exact("Jonn", "Smit"))
         assert len(results) == 0
 
 
@@ -182,12 +237,12 @@ class TestLevenshteinFilter:
 
     def test_levenshtein_filters_soundex_results(self, client):
         """Levenshtein narrows down Soundex results."""
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="John",
             last_name="Smith",
             date_of_birth=date(1990, 1, 1),
         )
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="Jon",
             last_name="Schmidt",
             date_of_birth=date(1990, 1, 1),
@@ -205,7 +260,7 @@ class TestLevenshteinCheckboxUX:
 
     @pytest.fixture(autouse=True)
     def _seed_data(self):
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="John",
             last_name="Smith",
             date_of_birth="1990-01-01",
@@ -253,7 +308,7 @@ class TestMatchSourceAnnotation:
 
     @pytest.fixture(autouse=True)
     def _seed_data(self):
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="John",
             last_name="Smith",
             date_of_birth="1990-05-15",
@@ -274,7 +329,7 @@ class TestMatchSourceAnnotation:
         assert response.status_code == 200
         results = response.context["results"]
         assert len(results) == 1
-        assert isinstance(results[0]["person"], Person)
+        assert isinstance(results[0]["person"], CourtRecord)
 
     def test_prefix_badge_flags(self, client):
         """Prefix mode sets has_prefix flag."""
@@ -300,7 +355,7 @@ class TestTrigramMode:
 
     def test_trigram_only_returns_results(self, client):
         """Trigram alone returns results (regression: early-return guard blocked it)."""
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="John",
             last_name="Smith",
             date_of_birth=date(1990, 1, 1),
@@ -313,12 +368,12 @@ class TestTrigramMode:
 
     def test_trigram_finds_similar_names(self, client):
         """Trigram finds names with character overlap."""
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="John",
             last_name="Smith",
             date_of_birth=date(1990, 1, 1),
         )
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="Jane",
             last_name="Smyth",
             date_of_birth=date(1990, 1, 1),
@@ -336,7 +391,7 @@ class TestLegacyMode:
 
     def test_legacy_mode_finds_substring(self, client):
         """Legacy mode uses icontains and finds substring matches."""
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="Johnathon",
             last_name="Smithsonian",
             date_of_birth=date(1990, 1, 1),
@@ -348,7 +403,7 @@ class TestLegacyMode:
 
     def test_legacy_badge_flag(self, client):
         """Legacy mode sets has_legacy flag."""
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="John",
             last_name="Smith",
             date_of_birth=date(1990, 1, 1),
@@ -364,7 +419,7 @@ class TestDMMode:
 
     def test_dm_mode_finds_exact_match(self, client):
         """DM mode returns matches."""
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="John",
             last_name="Smith",
             date_of_birth=date(1990, 1, 1),
@@ -375,7 +430,7 @@ class TestDMMode:
 
     def test_dm_badge_flag(self, client):
         """DM mode sets has_dm flag."""
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="John",
             last_name="Smith",
             date_of_birth=date(1990, 1, 1),
@@ -391,7 +446,7 @@ class TestModeSQL:
 
     def test_mode_sql_present_for_active_modes(self, client):
         """Active modes have non-empty SQL snippets."""
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="John",
             last_name="Smith",
             date_of_birth=date(1990, 1, 1),
@@ -405,7 +460,7 @@ class TestModeSQL:
 
     def test_mode_sql_contains_query_names(self, client):
         """SQL snippets contain the query names."""
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="John",
             last_name="Smith",
             date_of_birth=date(1990, 1, 1),
@@ -421,7 +476,7 @@ class TestPhoneticCodes:
 
     def test_phonetic_codes_in_context(self, client):
         """Query phonetic codes are computed and passed to template."""
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="John",
             last_name="Smith",
             date_of_birth=date(1990, 1, 1),
@@ -434,7 +489,7 @@ class TestPhoneticCodes:
 
     def test_result_phonetic_codes_when_soundex_enabled(self, client):
         """Results have phonetic_codes when soundex mode is active."""
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="John",
             last_name="Smith",
             date_of_birth=date(1990, 1, 1),
@@ -446,7 +501,7 @@ class TestPhoneticCodes:
 
     def test_result_phonetic_codes_when_dm_enabled(self, client):
         """Results have phonetic_codes when DM mode is active."""
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="John",
             last_name="Smith",
             date_of_birth=date(1990, 1, 1),
@@ -460,7 +515,7 @@ class TestPhoneticCodes:
         """B16: DM codes (text[] in SQL) are joined into human-readable strings,
         not Python list reprs like ['11 0', '10 0'], in both the query tooltip
         codes and the per-result codes."""
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="John",
             last_name="Smith",
             date_of_birth=date(1990, 1, 1),
@@ -485,7 +540,7 @@ class TestHelpPage:
 
     def test_help_page_has_examples(self, client):
         """Help page has examples context."""
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="John",
             last_name="Smith",
             date_of_birth=date(1990, 1, 1),
@@ -498,7 +553,7 @@ class TestHelpPage:
 
     def test_help_page_refresh_busts_cache(self, client):
         """?refresh=1 triggers cache invalidation."""
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="John",
             last_name="Smith",
             date_of_birth=date(1990, 1, 1),
@@ -527,10 +582,10 @@ class TestHelpExamples:
         Only A is inside the 5-20 window _generate_help_examples() picks from.
         """
         for i in range(5):
-            Person.objects.create(first_name=f"Ann{i}", last_name="Alfa", date_of_birth="1990-05-01")
+            CourtRecord.objects.create(first_name=f"Ann{i}", last_name="Alfa", date_of_birth="1990-05-01")
         for i in range(2):
-            Person.objects.create(first_name=f"Bob{i}", last_name="Beta", date_of_birth="1990-06-02")
-        Person.objects.create(first_name="Cy", last_name="Gamma", date_of_birth="1990-07-03")
+            CourtRecord.objects.create(first_name=f"Bob{i}", last_name="Beta", date_of_birth="1990-06-02")
+        CourtRecord.objects.create(first_name="Cy", last_name="Gamma", date_of_birth="1990-07-03")
 
     def test_help_page_examples_structure(self, client):
         """Help page returns 200 with a dob and the 7 search-mode groups,
@@ -560,9 +615,9 @@ class TestHelpExamples:
         """A 20-person DOB is inside the 5-20 window, a 21-person DOB is
         not — asserts the aggregate's counts are exact."""
         for i in range(20):
-            Person.objects.create(first_name=f"In{i}", last_name="Inrange", date_of_birth="1991-01-10")
+            CourtRecord.objects.create(first_name=f"In{i}", last_name="Inrange", date_of_birth="1991-01-10")
         for i in range(21):
-            Person.objects.create(first_name=f"Out{i}", last_name="Outher", date_of_birth="1991-02-20")
+            CourtRecord.objects.create(first_name=f"Out{i}", last_name="Outher", date_of_birth="1991-02-20")
         response = client.get("/help/")
         assert response.context["examples"]["dob"] == "1991-01-10"
 
@@ -576,7 +631,7 @@ class TestHelpExamples:
         assert cached == response.context["examples"]
         # New rows that would enter the 5-20 window if recomputed...
         for i in range(15):
-            Person.objects.create(first_name=f"Late{i}", last_name="Late", date_of_birth="1990-08-04")
+            CourtRecord.objects.create(first_name=f"Late{i}", last_name="Late", date_of_birth="1990-08-04")
         # ...but a plain request must still get the cached examples.
         response = client.get("/help/")
         assert response.context["examples"] == cached
@@ -584,13 +639,13 @@ class TestHelpExamples:
     def test_refresh_bypasses_cache(self, client):
         """?refresh=1 invalidates the cache and regenerates (the bypass
         still works with cache.add), and repopulates the cache."""
-        Person.objects.create(first_name="Bob", last_name="Beta", date_of_birth="1990-06-02")
+        CourtRecord.objects.create(first_name="Bob", last_name="Beta", date_of_birth="1990-06-02")
         # No DOB in the 5-20 window yet: examples fall back to 1990-01-01.
         client.get("/help/")
         assert cache.get("help_examples")["dob"] == "1990-01-01"
         # Now a DOB enters the window; a plain request still serves cache...
         for i in range(5):
-            Person.objects.create(first_name=f"Ann{i}", last_name="Alfa", date_of_birth="1990-05-01")
+            CourtRecord.objects.create(first_name=f"Ann{i}", last_name="Alfa", date_of_birth="1990-05-01")
         assert client.get("/help/").context["examples"]["dob"] == "1990-01-01"
         # ...while refresh picks up the new DOB and repopulates the cache.
         response = client.get("/help/?refresh=1")
@@ -610,7 +665,7 @@ class TestModeSQLTooltipEscaping:
 
     @pytest.fixture(autouse=True)
     def _seed_data(self):
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="John",
             last_name="Smith",
             date_of_birth=date(1990, 1, 1),
@@ -671,12 +726,12 @@ class TestMultipleModes:
 
     def test_multiple_modes_or_behavior(self, client):
         """Multiple modes return union of results."""
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="John",
             last_name="Smith",
             date_of_birth=date(1990, 1, 1),
         )
-        Person.objects.create(
+        CourtRecord.objects.create(
             first_name="Johnny",
             last_name="Smythe",
             date_of_birth=date(1990, 1, 1),
@@ -700,10 +755,10 @@ class TestDobOnlySearchRendering:
     @pytest.fixture(autouse=True)
     def _seed_data(self):
         self.dob = "1990-05-15"
-        Person.objects.create(first_name="John", last_name="Smith", date_of_birth=self.dob)
-        Person.objects.create(first_name="Robert", last_name="Jones", date_of_birth=self.dob)
+        CourtRecord.objects.create(first_name="John", last_name="Smith", date_of_birth=self.dob)
+        CourtRecord.objects.create(first_name="Robert", last_name="Jones", date_of_birth=self.dob)
         # Shares no DOB with the query — must never leak into the results.
-        Person.objects.create(first_name="Alice", last_name="Taylor", date_of_birth="1985-03-20")
+        CourtRecord.objects.create(first_name="Alice", last_name="Taylor", date_of_birth="1985-03-20")
 
     def test_dob_only_renders_result_rows(self, client):
         """A DOB-only search (no name) shows the matching rows, not the empty state."""
@@ -775,7 +830,7 @@ class TestTop100Label:
     def test_full_page_says_top_100(self, client):
         """A full 100-row page renders 'Showing top 100 matches'."""
         for i in range(105):
-            Person.objects.create(first_name=f"First{i:03d}", last_name="Smith", date_of_birth=date(1990, 1, 1))
+            CourtRecord.objects.create(first_name=f"First{i:03d}", last_name="Smith", date_of_birth=date(1990, 1, 1))
         response = client.get("/search/?modes=legacy&last_name=Smith")
         assert response.status_code == 200
         assert response.context["count"] == 100
@@ -789,9 +844,9 @@ class TestSearchExplain:
 
     @pytest.fixture(autouse=True)
     def _seed_data(self):
-        Person.objects.create(first_name="John", last_name="Smith", date_of_birth="1990-05-15")
-        Person.objects.create(first_name="Jonh", last_name="Smyth", date_of_birth="1985-03-20")
-        Person.objects.create(first_name="Alice", last_name="Jones", date_of_birth="1992-11-01")
+        CourtRecord.objects.create(first_name="John", last_name="Smith", date_of_birth="1990-05-15")
+        CourtRecord.objects.create(first_name="Jonh", last_name="Smyth", date_of_birth="1985-03-20")
+        CourtRecord.objects.create(first_name="Alice", last_name="Jones", date_of_birth="1992-11-01")
 
     def test_explain_single_mode_legacy(self, client):
         """mode=legacy explains the legacy LIKE query — no Soundex SQL."""
@@ -856,12 +911,12 @@ class TestSearchExplain:
 
     @pytest.mark.parametrize("mode", ["prefix", "legacy", "soundex", "dm", "trigram"])
     def test_explain_plan_nonempty_with_scan_node(self, client, mode):
-        """Every valid mode yields a non-empty plan that scans records_person."""
+        """Every valid mode yields a non-empty plan that scans records_courtrecord."""
         response = client.get(f"/search/explain/?mode={mode}&first_name=John&last_name=Smith")
         assert response.status_code == 200
         plan = response.context["plan"]
         assert plan
-        assert _SCAN_NODE_RE.search(plan), f"no scan node on records_person in plan:\n{plan}"
+        assert _SCAN_NODE_RE.search(plan), f"no scan node on records_courtrecord in plan:\n{plan}"
 
     def test_explain_prefix_plan_carries_prefix_conditions(self, client):
         """The prefix plan carries the query's LIKE-prefix conditions (no soundex)."""
@@ -961,7 +1016,7 @@ class TestModeSqlTooltips:
 
     @pytest.fixture(autouse=True)
     def _seed_data(self):
-        Person.objects.create(first_name="John", last_name="Smith", date_of_birth="1990-01-01")
+        CourtRecord.objects.create(first_name="John", last_name="Smith", date_of_birth="1990-01-01")
 
     def test_enabled_modes_with_name_have_tooltips(self, client):
         """Enabled modes with a name in the query carry the mode-SQL tooltip."""
@@ -1014,7 +1069,7 @@ class TestSqlQueriesPanel:
 
     @pytest.fixture(autouse=True)
     def _seed_data(self):
-        Person.objects.create(first_name="John", last_name="Smith", date_of_birth="1990-01-01")
+        CourtRecord.objects.create(first_name="John", last_name="Smith", date_of_birth="1990-01-01")
 
     def test_sql_rendered_when_debug_true(self, client):
         """With DEBUG=True the search's generated SQL is captured and rendered."""
@@ -1022,7 +1077,7 @@ class TestSqlQueriesPanel:
             response = client.get("/search/?modes=prefix&first_name=John&last_name=Smith")
         assert response.status_code == 200
         assert response.context["queries"], "connection.queries must be populated under DEBUG=True"
-        assert any("records_person" in q["sql"] for q in response.context["queries"])
+        assert any("records_courtrecord" in q["sql"] for q in response.context["queries"])
         assert "SELECT" in response.content.decode()
 
     def test_sql_not_rendered_when_debug_false(self, client):
@@ -1050,7 +1105,7 @@ class TestHXRequestPartialResponse:
 
     @pytest.fixture(autouse=True)
     def _seed_data(self):
-        Person.objects.create(first_name="John", last_name="Smith", date_of_birth="1990-01-01")
+        CourtRecord.objects.create(first_name="John", last_name="Smith", date_of_birth="1990-01-01")
 
     def test_normal_get_returns_full_page_with_results(self, client):
         """A plain browser GET renders the page shell with the results inlined."""

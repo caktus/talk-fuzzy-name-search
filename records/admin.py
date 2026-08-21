@@ -1,13 +1,13 @@
-"""Admin registration for Person model."""
+"""Admin registration for CourtRecord model."""
 
 from django.contrib import admin
 
-from .models import Person
+from .models import CourtRecord
 
 
-@admin.register(Person)
-class PersonAdmin(admin.ModelAdmin):
-    """Admin interface for Person model."""
+@admin.register(CourtRecord)
+class CourtRecordAdmin(admin.ModelAdmin):
+    """Admin interface for CourtRecord model."""
 
     list_display = ("first_name", "last_name", "middle_name", "date_of_birth", "person_id")
     list_filter = ("date_of_birth",)

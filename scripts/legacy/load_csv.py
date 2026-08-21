@@ -18,14 +18,14 @@ import django
 
 django.setup()
 
-from records.models import Person  # noqa: E402
+from records.models import CourtRecord  # noqa: E402
 
 
 def load_csv(csv_path: str, batch_size: int = 50000):
     print(f"Loading {csv_path} into database (bulk_create)...", flush=True)
     start_time = time.time()
 
-    deleted, _ = Person.objects.all().delete()
+    deleted, _ = CourtRecord.objects.all().delete()
     print(f"  Cleared {deleted:,} existing records", flush=True)
 
     loaded = 0
@@ -39,7 +39,7 @@ def load_csv(csv_path: str, batch_size: int = 50000):
             middle = row.get("middle_name") or None
 
             batch.append(
-                Person(
+                CourtRecord(
                     first_name=row["first_name"],
                     last_name=row["last_name"],
                     middle_name=middle,
@@ -49,7 +49,7 @@ def load_csv(csv_path: str, batch_size: int = 50000):
             )
 
             if len(batch) >= batch_size:
-                Person.objects.bulk_create(batch)
+                CourtRecord.objects.bulk_create(batch)
                 loaded += len(batch)
                 batch = []
                 elapsed = time.time() - start_time
@@ -57,11 +57,11 @@ def load_csv(csv_path: str, batch_size: int = 50000):
                 print(f"  {loaded:,} loaded ({rate:,.0f} rows/s, {elapsed:.0f}s)", flush=True)
 
         if batch:
-            Person.objects.bulk_create(batch)
+            CourtRecord.objects.bulk_create(batch)
             loaded += len(batch)
 
     total_time = time.time() - start_time
-    count = Person.objects.count()
+    count = CourtRecord.objects.count()
     print(f"Loaded {count:,} records in {total_time:.1f}s", flush=True)
 
 
