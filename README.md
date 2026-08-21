@@ -63,6 +63,20 @@ DEBUG=True
 DJANGO_SECRET_KEY=django-insecure-demo-key-change-in-production
 EOF
 
+### Seeding with real name data
+
+`seed_data` weights first/last names with real US Census/SSA frequency counts
+from `name_dataset/us_forenames.csv` and `name_dataset/us_surnames.csv`. Those
+files are gitignored local artifacts (not committed), so download them once
+first — run the marimo script from the `name_dataset/` directory so the CSVs
+land where `seed_data` expects them:
+
+```bash
+cd name_dataset
+uv run python download_name_data.py   # one-time; requires kagglehub (already a dependency)
+cd ..
+```
+
 # Migrate + seed a fast local dataset (under a minute)
 uv run python manage.py migrate
 uv run python manage.py seed_data --count 100000 --flush --seed 42 --as-of 2026-01-01

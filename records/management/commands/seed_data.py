@@ -6,15 +6,21 @@ Usage:
 
 --count is the target number of final rows (after cluster expansion).
 
-Distribution model (rewritten 2026-08-14 after RECS-2026-08-14 B3 — honest + deterministic):
-    1. Name pool: exactly pool_size DISTINCT (first_name, last_name) pairs, drawn
-       uniformly without replacement from Faker's en_US cartesian space
-       (690 first x 1,000 last = 690,000 possible pairs; the pool is capped at
-       the space size when --count is large).
-    2. Name frequency: pool rows are sampled with Zipf(a = ZIPF_ALPHA = 1.1), a
-       genuine heavy tail. Zipf index i (1-based) maps to pool row
-       (i - 1) % len(pool); indices past the pool size wrap modulo, which keeps
-       every pair reachable. This step is the sole source of name-frequency skew.
+Distribution model:
+    1. Name frequency: real US Census/SSA name counts from
+       name_dataset/us_forenames.csv (columns forename,gender,count) and
+       name_dataset/us_surnames.csv (columns surname,gender,count),
+       downloaded by name_dataset/download_name_data.py (see README). Gender
+       rows are summed
+       together (Person has no gender field), names are uppercased and deduped,
+       and each name's raw `count` is used directly as its sampling weight.
+    2. Name sampling: first_name and last_name are drawn INDEPENDENTLY per
+       identity, each proportional to its Census/SSA count (precomputed
+       cumulative distribution + np.searchsorted). Independent long-tailed
+       first/last distributions mean no single (first, last) pair concentrates
+       at a Zipf top rank — the joint probability of the most common pair is
+       P(most common first) x P(most common last), far flatter than the
+       previous shared-Zipf-rank-over-paired-pool approach.
     3. Identities generated in batches until expanded row total reaches --count.
        Each identity gets one DOB; cluster variants share that DOB and person_id.
        Cluster size: 80% singleton, 20% Pareto(1.5), clipped to [2, 80].
@@ -36,12 +42,20 @@ Variation injection:
     ~20% of non-canonical rows in multi-member clusters: inject a single random
     typo into first_name or last_name (the first row of each cluster is the
     canonical row and is never typo'd)
+
+Data files:
+    The name-frequency CSVs live in name_dataset/ as gitignored local
+    artifacts (not committed to the repo). Download them first by running
+    name_dataset/download_name_data.py from the name_dataset/ directory
+    (requires kagglehub; see README). If they are missing, seed_data raises a
+    CommandError pointing at the download script.
 """
 
 import string
 import time
 from collections import defaultdict
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 import numpy as np
 import polars as pl
@@ -52,9 +66,16 @@ from faker import Faker
 from records.models import Person
 from records.phonetics import NICKNAME_MAP
 
+# Name-frequency data (uncompressed CSVs, gitignored local artifacts produced
+# by name_dataset/download_name_data.py; loaded in-memory via pl.read_csv)
+NAME_DATASET_DIR = Path(__file__).resolve().parents[3] / "name_dataset"
+FORENAMES_CSV = NAME_DATASET_DIR / "us_forenames.csv"
+SURNAMES_CSV = NAME_DATASET_DIR / "us_surnames.csv"
+# Person.first_name / last_name are CharField(max_length=50); longer dataset
+# entries (a handful of names with combining-mark runs) are dropped at load.
+MAX_NAME_LENGTH = 50
+
 # Generation rates
-NAME_POOL_FRACTION = 0.2  # pool size = 20% of --count
-ZIPF_ALPHA = 1.1  # Zipf skew for name-pair frequencies (1 < a < 2: heavy tail)
 NICKNAME_RATE = 0.30
 MIDDLE_NAME_RATE = 0.90
 TYPO_RATE = 0.20  # of non-canonical rows in multi-member clusters
@@ -65,8 +86,10 @@ SAMPLE_CASES_COUNT_LIMIT = 1_000_000  # skip post-seed sample cases above this -
 
 class Command(BaseCommand):
     help = (
-        "Seed the database with realistic person records. Names: deduped pool sampled "
-        "with a Zipf(a=1.1) heavy tail. Fully reproducible from the (seed, count, as-of) triple."
+        "Seed the database with realistic person records. Names: first and last names sampled "
+        "independently, each weighted by US Census/SSA frequency counts (download the data via "
+        "name_dataset/download_name_data.py first). Fully reproducible from the (seed, count, as-of) "
+        "triple."
     )
 
     def add_arguments(self, parser):
@@ -160,13 +183,15 @@ class Command(BaseCommand):
         fake = Faker("en_US")
         fake.seed_instance(rng_seed)
 
-        pool_size = max(int(count * NAME_POOL_FRACTION), 100)
-
-        # --- 1. Build name pool (distinct pairs) ---
-        self.stdout.write(f"  Building name pool (target {pool_size:,} unique pairs)...")
+        # --- 1. Load name frequency data (Census/SSA counts) ---
+        self.stdout.write("  Loading name frequency data...")
         t0 = time.perf_counter()
-        name_pool = self._build_name_pool(pool_size, fake, rng)
-        self.stdout.write(f"    done in {time.perf_counter() - t0:.1f}s ({len(name_pool):,} unique pairs)")
+        first_names, first_cdf = self._load_name_weights(FORENAMES_CSV, "forename")
+        last_names, last_cdf = self._load_name_weights(SURNAMES_CSV, "surname")
+        self.stdout.write(
+            f"    done in {time.perf_counter() - t0:.1f}s "
+            f"({len(first_names):,} first names, {len(last_names):,} last names)"
+        )
 
         # --- 2-4. Generate + insert in streaming batches ---
         AVG_CLUSTER_SIZE = 1.5  # rough estimate (80% size=1, 20% Pareto)
@@ -183,7 +208,11 @@ class Command(BaseCommand):
                 f"  Batch {batch_num}: sampling {batch_identities:,} identities (need ~{remaining:,} more rows)"
             )
             t0 = time.perf_counter()
-            sampled = self._zipf_sample(name_pool, batch_identities, rng)
+            # First and last names are drawn independently, each weighted by its
+            # Census/SSA count, so no (first, last) pair is pre-paired in a pool.
+            firsts = self._sample_names(first_names, first_cdf, batch_identities, rng)
+            lasts = self._sample_names(last_names, last_cdf, batch_identities, rng)
+            sampled = pl.DataFrame({"first_name": firsts, "last_name": lasts})
             identities = self._assign_attributes(sampled, batch_identities, rng, fake, as_of)
             batch_rows = self._expand_clusters(identities, rng)
             self.stdout.write(f"    generate: {time.perf_counter() - t0:.1f}s ({len(batch_rows):,} rows)")
@@ -224,49 +253,56 @@ class Command(BaseCommand):
         with connection.cursor() as cursor:
             cursor.execute("TRUNCATE records_person RESTART IDENTITY")
 
-    def _build_name_pool(self, pool_size: int, fake: Faker, rng: np.random.Generator) -> pl.DataFrame:
-        """Build a pool of DISTINCT first/last name pairs.
+    @staticmethod
+    def _load_name_weights(path: Path, name_column: str) -> tuple[np.ndarray, np.ndarray]:
+        """Load a name-frequency CSV into (names, cdf) for weighted sampling.
 
-        Pairs are drawn uniformly *without replacement* from Faker's en_US
-        cartesian space (every first-name x last-name combination), so every
-        row of the pool is a unique pair. If pool_size exceeds the space size
-        (690 x 1,000 = 690,000 for faker 40.x), the pool is capped at the
-        space size and a note is printed.
+        The file has columns ``<name_column>,gender,count`` where ``count`` is
+        the raw Census/SSA occurrence count for that name. Gender rows are
+        summed together (Person has no gender field), names are uppercased
+        and deduped, and names longer than MAX_NAME_LENGTH characters are
+        dropped (Person.first_name/last_name are CharField(max_length=50)).
+
+        Returns ``names`` (a str ndarray, sorted by count descending, ties by
+        name — stable ordering makes the sampled output deterministic for a
+        given data file) and ``cdf``, the cumulative sum of counts normalized
+        so cdf[-1] == 1.0, for use with _sample_names.
         """
-        from faker.providers.person.en_US import Provider as en_US
-
-        all_first_names = [n.upper() for n in en_US.first_names.keys()]
-        all_last_names = [n.upper() for n in en_US.last_names.keys()]
-        space_size = len(all_first_names) * len(all_last_names)
-
-        if pool_size > space_size:
-            self.stdout.write(
-                f"  Note: requested pool of {pool_size:,} exceeds the {space_size:,} distinct pairs in "
-                f"the en_US name space; capping the pool at {space_size:,}."
+        if not path.exists():
+            raise CommandError(
+                f"Name-frequency data missing at {path}; download it by running "
+                "name_dataset/download_name_data.py from the name_dataset/ directory "
+                "(requires kagglehub; see the README)"
             )
-            pool_size = space_size
 
-        flat = rng.choice(space_size, size=pool_size, replace=False)
-        first_names = np.array(all_first_names)[flat // len(all_last_names)]
-        last_names = np.array(all_last_names)[flat % len(all_last_names)]
-
-        return pl.DataFrame(
-            {
-                "first_name": first_names,
-                "last_name": last_names,
-            }
+        df = (
+            pl.read_csv(path)
+            .drop_nulls(name_column)
+            .with_columns(pl.col(name_column).str.to_uppercase())
+            .group_by(name_column)
+            .agg(pl.col("count").sum())
+            .filter(pl.col(name_column).str.len_chars() <= MAX_NAME_LENGTH)
+            .sort([pl.col("count") * -1, name_column])
         )
 
-    @staticmethod
-    def _zipf_sample(pool: pl.DataFrame, sample_size: int, rng: np.random.Generator) -> pl.DataFrame:
-        """Sample pool rows with Zipf(a=ZIPF_ALPHA) indices for a heavy-tailed name frequency.
+        names = df[name_column].to_numpy()
+        cdf = np.cumsum(df["count"].to_numpy().astype(np.float64))
+        cdf /= cdf[-1]
+        return names, cdf
 
-        Zipf index i (1-based) maps to pool row (i - 1) % len(pool). Indices
-        past the pool size wrap modulo, so every pool row stays reachable
-        while draws concentrate on the first pool rows.
+    @staticmethod
+    def _sample_names(names: np.ndarray, cdf: np.ndarray, sample_size: int, rng: np.random.Generator) -> np.ndarray:
+        """Draw `sample_size` names, each weighted by its Census/SSA count.
+
+        P(name_i) = count_i / total_count: draw uniforms u in [0, 1) from the
+        seeded RNG and map them through the precomputed cumulative
+        distribution with np.searchsorted. Vectorized over the whole batch
+        (one O(n) cdf plus O(k log n) per call), so it scales to millions of
+        draws without per-name Python state. Because u < 1.0 = cdf[-1],
+        searchsorted always returns a valid index.
         """
-        indices = (rng.zipf(ZIPF_ALPHA, size=sample_size) - 1) % len(pool)
-        return pool[indices]
+        u = rng.random(sample_size)
+        return names[np.searchsorted(cdf, u)]
 
     def _assign_attributes(
         self, df: pl.DataFrame, count: int, rng: np.random.Generator, fake: Faker, as_of: date

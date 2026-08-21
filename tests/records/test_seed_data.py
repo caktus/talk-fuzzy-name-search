@@ -1,18 +1,21 @@
 """Tests for seed_data management command generation logic.
 
-Tests the vectorized name generation, Zipf sampling, cluster expansion,
-typo injection within clusters, person_id consistency, batched bulk-insert,
-and (seed, count, as-of) reproducibility.
+Tests the vectorized name generation, Census/SSA-weighted independent name
+sampling, cluster expansion, typo injection within clusters, person_id
+consistency, batched bulk-insert, and (seed, count, as-of) reproducibility.
 """
 
 from datetime import date
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import numpy as np
 import polars as pl
 import pytest
+from django.core.management.base import CommandError
 from django.db import connection
 
+from records.management.commands import seed_data
 from records.management.commands.seed_data import Command
 from records.models import Person
 
@@ -20,6 +23,25 @@ pytestmark = pytest.mark.django_db
 
 # Fixed reference date so tests never depend on the wall clock.
 AS_OF = date(2026, 1, 1)
+
+
+@pytest.fixture()
+def name_csv(tmp_path) -> Path:
+    """A small synthetic name-frequency CSV in the Census/SSA format
+    (forename,gender,count): two gender rows for one name, a lowercase name,
+    a null name, and a name longer than the model's max_length=50."""
+    path = tmp_path / "names.csv"
+    path.write_text(f"forename,gender,count\nalice,M,1000\nalice,F,500\nBob,M,100\nCarol,F,50\n,M,7\n{'X' * 51},M,3\n")
+    return path
+
+
+def _sampled_frame(n: int, rng: np.random.Generator, csv_path: Path) -> pl.DataFrame:
+    """Names sampled independently from a small synthetic CSV fixture —
+    the same call sequence _seed uses per batch."""
+    names, cdf = Command._load_name_weights(csv_path, "forename")
+    firsts = Command._sample_names(names, cdf, n, rng)
+    lasts = Command._sample_names(names, cdf, n, rng)
+    return pl.DataFrame({"first_name": firsts, "last_name": lasts})
 
 
 class ScriptedRng:
@@ -45,120 +67,127 @@ class ScriptedRng:
         return value
 
 
-class TestNamePoolGeneration:
-    """Test _build_name_pool generates distinct name combinations."""
+class TestLoadNameWeights:
+    """Test _load_name_weights normalizes a Census/SSA frequency CSV into
+    (names, cdf) for weighted sampling."""
 
-    def test_pool_size(self):
-        """Pool size matches requested size."""
-        cmd = Command()
-        fake = pytest.importorskip("faker").Faker("en_US")
-        rng = np.random.default_rng(42)
-        pool = cmd._build_name_pool(500, fake, rng)
+    def test_genders_are_aggregated(self, name_csv):
+        """Gender rows for the same name are summed into one weight."""
+        names, cdf = Command._load_name_weights(name_csv, "forename")
 
-        assert len(pool) == 500
-        assert "first_name" in pool.columns
-        assert "last_name" in pool.columns
+        # ALICE = 1000 (M) + 500 (F); the null and 51-char names are dropped
+        assert set(names) == {"ALICE", "BOB", "CAROL"}
+        assert cdf[0] == pytest.approx(1500 / 1650)
+        assert cdf[1] == pytest.approx(1600 / 1650)
+        assert cdf[-1] == 1.0
 
-    def test_pool_pairs_are_distinct(self):
-        """Every pair in the pool is unique (deduped pool)."""
-        cmd = Command()
-        fake = pytest.importorskip("faker").Faker("en_US")
-        rng = np.random.default_rng(42)
-        pool = cmd._build_name_pool(500, fake, rng)
+    def test_names_are_uppercased(self, name_csv):
+        """Lowercase dataset entries are uppercased."""
+        names, _ = Command._load_name_weights(name_csv, "forename")
+        assert all(name == name.upper() for name in names)
 
-        assert len(pool.unique()) == len(pool)
+    def test_sorted_by_count_descending(self, name_csv):
+        """Names are ordered by count descending (ties by name) so the
+        vocabulary ordering — and the sampled output for a given seed — is
+        stable for a given data file."""
+        names, _ = Command._load_name_weights(name_csv, "forename")
+        assert names.tolist() == ["ALICE", "BOB", "CAROL"]
 
-    def test_names_are_uppercase(self):
-        """All names in the pool are uppercase."""
-        cmd = Command()
-        fake = pytest.importorskip("faker").Faker("en_US")
-        rng = np.random.default_rng(42)
-        pool = cmd._build_name_pool(200, fake, rng)
+    def test_cdf_is_monotone_and_normalized(self, name_csv):
+        """cdf is non-decreasing and ends at exactly 1.0."""
+        _, cdf = Command._load_name_weights(name_csv, "forename")
+        assert np.all(np.diff(cdf) >= 0)
+        assert cdf[-1] == 1.0
 
-        for name in pool["first_name"].to_list():
-            assert name == name.upper()
-        for name in pool["last_name"].to_list():
-            assert name == name.upper()
+    def test_null_and_long_names_dropped(self, name_csv):
+        """Null names and names longer than CharField(max_length=50) are dropped."""
+        names, _ = Command._load_name_weights(name_csv, "forename")
+        assert all(0 < len(name) <= 50 for name in names)
 
-    def test_no_empty_names(self):
-        """No empty names in the pool."""
-        cmd = Command()
-        fake = pytest.importorskip("faker").Faker("en_US")
-        rng = np.random.default_rng(42)
-        pool = cmd._build_name_pool(500, fake, rng)
+    def test_missing_file_raises_command_error(self, tmp_path):
+        """A missing data file raises a CommandError pointing at the download script."""
+        with pytest.raises(CommandError, match="download_name_data"):
+            Command._load_name_weights(tmp_path / "nope.csv", "forename")
 
-        assert all(len(name) > 0 for name in pool["first_name"].to_list())
-        assert all(len(name) > 0 for name in pool["last_name"].to_list())
+    @pytest.mark.skipif(
+        not (seed_data.FORENAMES_CSV.exists() and seed_data.SURNAMES_CSV.exists()),
+        reason="local name data not downloaded; run name_dataset/download_name_data.py",
+    )
+    def test_local_dataset_files_load(self):
+        """The locally downloaded (gitignored) CSVs load via pl.read_csv and
+        are valid weight tables. Skipped when the data has not been downloaded."""
+        for path, column in [
+            (seed_data.FORENAMES_CSV, "forename"),
+            (seed_data.SURNAMES_CSV, "surname"),
+        ]:
+            names, cdf = Command._load_name_weights(path, column)
+            assert len(names) >= 100_000
+            assert len(np.unique(names)) == len(names)
+            assert cdf[-1] == 1.0
+            assert all(0 < len(n) <= 50 for n in names[:1000])
 
-    def test_pool_capped_at_name_space(self):
-        """Pool cannot exceed the en_US cartesian space and stays distinct."""
-        cmd = Command()
-        fake = pytest.importorskip("faker").Faker("en_US")
-        rng = np.random.default_rng(42)
-        pool = cmd._build_name_pool(2_000_000, fake, rng)
 
-        assert len(pool) <= 690_000
-        assert len(pool.unique()) == len(pool)
+class TestIndependentNameSampling:
+    """Test _sample_names draws each name with probability proportional to
+    its Census/SSA count."""
 
+    @pytest.fixture()
+    def vocab(self, tmp_path):
+        path = tmp_path / "vocab.csv"
+        path.write_text("forename,gender,count\nAlpha,M,9000\nBeta,M,1000\n")
+        return Command._load_name_weights(path, "forename")
 
-class TestZipfSampling:
-    """Test _zipf_sample produces a heavy-tailed name frequency distribution."""
-
-    def test_sample_size(self):
+    def test_sample_size(self, vocab):
         """Sample size matches requested size."""
-        cmd = Command()
-        pool = pl.DataFrame(
-            {
-                "first_name": [f"FIRST{i}" for i in range(100)],
-                "last_name": [f"LAST{i}" for i in range(100)],
-            }
-        )
+        names, cdf = vocab
         rng = np.random.default_rng(42)
-        sampled = cmd._zipf_sample(pool, 500, rng)
+        assert len(Command._sample_names(names, cdf, 500, rng)) == 500
 
-        assert len(sampled) == 500
-
-    def test_heavy_tailed_distribution(self):
-        """Zipf sampling produces a heavy tail: top pair far more frequent than the median pair."""
-        cmd = Command()
-        pool = pl.DataFrame(
-            {
-                "first_name": [f"FIRST{i}" for i in range(100)],
-                "last_name": [f"LAST{i}" for i in range(100)],
-            }
-        )
+    def test_samples_only_from_vocabulary(self, vocab):
+        """Every sampled name exists in the source vocabulary."""
+        names, cdf = vocab
         rng = np.random.default_rng(42)
-        sampled = cmd._zipf_sample(pool, 10_000, rng)
+        sampled = Command._sample_names(names, cdf, 5000, rng)
+        assert set(sampled) <= set(names)
 
-        # Frequency of every pool pair (including pairs that drew zero samples)
-        pos = {pair: i for i, pair in enumerate(zip(pool["first_name"], pool["last_name"]))}
-        freq = np.zeros(len(pool), dtype=int)
-        for fn, ln, c in sampled.group_by(["first_name", "last_name"]).agg(pl.len().alias("c")).iter_rows():
-            freq[pos[(fn, ln)]] = c
+    def test_weighting_follows_counts(self, vocab):
+        """A name with 9x the count of another is drawn ~9x more often.
 
-        top = freq.max()
-        median = np.median(freq)
-        tenth = np.sort(freq)[::-1][9]
-
-        # Measured across 30 seeds: top/median is >= 12x, top/10th is >= 8x — 5x/2x are robust margins.
-        assert top >= 5 * median
-        assert top >= 2 * tenth
-
-    def test_sampled_names_from_pool(self):
-        """All sampled names exist in the original pool."""
-        cmd = Command()
-        pool = pl.DataFrame(
-            {
-                "first_name": [f"FIRST{i}" for i in range(100)],
-                "last_name": [f"LAST{i}" for i in range(100)],
-            }
-        )
+        P(ALPHA) = 0.9, P(BETA) = 0.1: over 40k draws E[ALPHA] = 36000
+        (sigma ~ 60), E[BETA] = 4000 (sigma ~ 60) — the margins below are
+        ~50 sigma wide, so this only fails if the weighting is broken.
+        """
+        names, cdf = vocab
         rng = np.random.default_rng(42)
-        sampled = cmd._zipf_sample(pool, 500, rng)
+        sampled = Command._sample_names(names, cdf, 40_000, rng)
+        freq = {name: int((sampled == name).sum()) for name in names}
 
-        pool_set = set(zip(pool["first_name"].to_list(), pool["last_name"].to_list()))
-        for fn, ln in zip(sampled["first_name"].to_list(), sampled["last_name"].to_list()):
-            assert (fn, ln) in pool_set
+        assert freq["ALPHA"] > 9 * freq["BETA"]
+        assert 33_000 <= freq["ALPHA"] <= 39_000
+        assert 3_400 <= freq["BETA"] <= 4_600
+
+    def test_first_and_last_draws_are_independent(self, vocab):
+        """The (first, last) joint frequency matches the product of the
+        marginals — the two draws do not share a rank, so no pair
+        concentrates at a Zipf top rank."""
+        names, cdf = vocab
+        rng = np.random.default_rng(42)
+        firsts = Command._sample_names(names, cdf, 40_000, rng)
+        lasts = Command._sample_names(names, cdf, 40_000, rng)
+
+        observed = int(((firsts == "ALPHA") & (lasts == "BETA")).sum())
+        expected = 40_000 * 0.9 * 0.1
+        sigma = np.sqrt(40_000 * 0.09 * 0.91)
+        assert abs(observed - expected) < 5 * sigma
+
+    def test_reproducible_with_fixed_seed(self, vocab):
+        """The same seed reproduces the same draw sequence; another seed does not."""
+        names, cdf = vocab
+        a = Command._sample_names(names, cdf, 10_000, np.random.default_rng(42))
+        b = Command._sample_names(names, cdf, 10_000, np.random.default_rng(42))
+        c = Command._sample_names(names, cdf, 10_000, np.random.default_rng(7))
+        assert (a == b).all()
+        assert not (a == c).all()
 
 
 class TestTypoInjection:
@@ -274,30 +303,28 @@ class TestTypoInjectionBranches:
 class TestClusterExpansion:
     """Test _expand_clusters produces correct cluster structures."""
 
-    def test_expansion_respects_cluster_sizes(self):
+    def test_expansion_respects_cluster_sizes(self, name_csv):
         """Expanded rows count matches sum of cluster sizes."""
         cmd = Command()
         fake = pytest.importorskip("faker").Faker("en_US")
         fake.seed_instance(42)
         rng = np.random.default_rng(42)
 
-        pool = cmd._build_name_pool(50, fake, rng)
-        sampled = cmd._zipf_sample(pool, 100, rng)
+        sampled = _sampled_frame(100, rng, name_csv)
         identities = cmd._assign_attributes(sampled, 100, rng, fake, AS_OF)
         expanded = cmd._expand_clusters(identities, rng)
 
         expected_total = int(identities["cluster_size"].sum())
         assert len(expanded) == expected_total
 
-    def test_cluster_records_share_person_id_and_dob(self):
+    def test_cluster_records_share_person_id_and_dob(self, name_csv):
         """All records from the same identity share person_id and DOB."""
         cmd = Command()
         fake = pytest.importorskip("faker").Faker("en_US")
         fake.seed_instance(42)
         rng = np.random.default_rng(42)
 
-        pool = cmd._build_name_pool(50, fake, rng)
-        sampled = cmd._zipf_sample(pool, 100, rng)
+        sampled = _sampled_frame(100, rng, name_csv)
         identities = cmd._assign_attributes(sampled, 100, rng, fake, AS_OF)
         expanded = cmd._expand_clusters(identities, rng)
 
@@ -309,15 +336,14 @@ class TestClusterExpansion:
         for pid_str, dobs in pid_groups.items():
             assert len(dobs) == 1, f"Cluster {pid_str} has multiple DOBs: {dobs}"
 
-    def test_expanded_records_have_person_id(self):
+    def test_expanded_records_have_person_id(self, name_csv):
         """All expanded records have a valid person_id."""
         cmd = Command()
         fake = pytest.importorskip("faker").Faker("en_US")
         fake.seed_instance(42)
         rng = np.random.default_rng(42)
 
-        pool = cmd._build_name_pool(50, fake, rng)
-        sampled = cmd._zipf_sample(pool, 100, rng)
+        sampled = _sampled_frame(100, rng, name_csv)
         identities = cmd._assign_attributes(sampled, 100, rng, fake, AS_OF)
         expanded = cmd._expand_clusters(identities, rng)
 
@@ -328,15 +354,14 @@ class TestClusterExpansion:
 class TestBulkInsert:
     """Test _bulk_insert creates records correctly."""
 
-    def test_bulk_insert_creates_records(self):
+    def test_bulk_insert_creates_records(self, name_csv):
         """Bulk insert creates the expected number of records."""
         cmd = Command()
         fake = pytest.importorskip("faker").Faker("en_US")
         fake.seed_instance(42)
         rng = np.random.default_rng(42)
 
-        pool = cmd._build_name_pool(50, fake, rng)
-        sampled = cmd._zipf_sample(pool, 200, rng)
+        sampled = _sampled_frame(200, rng, name_csv)
         identities = cmd._assign_attributes(sampled, 200, rng, fake, AS_OF)
         expanded = cmd._expand_clusters(identities, rng)
 
@@ -344,15 +369,14 @@ class TestBulkInsert:
         cmd._bulk_insert(expanded)
         assert Person.objects.count() == len(expanded)
 
-    def test_bulk_insert_dob_not_null(self):
+    def test_bulk_insert_dob_not_null(self, name_csv):
         """All inserted records have a non-NULL date_of_birth."""
         cmd = Command()
         fake = pytest.importorskip("faker").Faker("en_US")
         fake.seed_instance(42)
         rng = np.random.default_rng(42)
 
-        pool = cmd._build_name_pool(50, fake, rng)
-        sampled = cmd._zipf_sample(pool, 200, rng)
+        sampled = _sampled_frame(200, rng, name_csv)
         identities = cmd._assign_attributes(sampled, 200, rng, fake, AS_OF)
         expanded = cmd._expand_clusters(identities, rng)
 
@@ -360,15 +384,14 @@ class TestBulkInsert:
         null_count = Person.objects.filter(date_of_birth__isnull=True).count()
         assert null_count == 0
 
-    def test_bulk_insert_person_id_not_null(self):
+    def test_bulk_insert_person_id_not_null(self, name_csv):
         """All inserted records have a non-NULL person_id."""
         cmd = Command()
         fake = pytest.importorskip("faker").Faker("en_US")
         fake.seed_instance(42)
         rng = np.random.default_rng(42)
 
-        pool = cmd._build_name_pool(50, fake, rng)
-        sampled = cmd._zipf_sample(pool, 200, rng)
+        sampled = _sampled_frame(200, rng, name_csv)
         identities = cmd._assign_attributes(sampled, 200, rng, fake, AS_OF)
         expanded = cmd._expand_clusters(identities, rng)
 
@@ -376,15 +399,14 @@ class TestBulkInsert:
         null_count = Person.objects.filter(person_id__isnull=True).count()
         assert null_count == 0
 
-    def test_bulk_insert_nickname_records(self):
+    def test_bulk_insert_nickname_records(self, name_csv):
         """Some records have nicknames populated."""
         cmd = Command()
         fake = pytest.importorskip("faker").Faker("en_US")
         fake.seed_instance(42)
         rng = np.random.default_rng(42)
 
-        pool = cmd._build_name_pool(500, fake, rng)
-        sampled = cmd._zipf_sample(pool, 1000, rng)
+        sampled = _sampled_frame(1000, rng, name_csv)
         identities = cmd._assign_attributes(sampled, 1000, rng, fake, AS_OF)
         expanded = cmd._expand_clusters(identities, rng)
 
@@ -392,15 +414,14 @@ class TestBulkInsert:
         with_nicknames = Person.objects.filter(nicknames__len__gt=0).count()
         assert with_nicknames > 0
 
-    def test_bulk_insert_middle_name_records(self):
+    def test_bulk_insert_middle_name_records(self, name_csv):
         """Most records have middle names (90% rate)."""
         cmd = Command()
         fake = pytest.importorskip("faker").Faker("en_US")
         fake.seed_instance(42)
         rng = np.random.default_rng(42)
 
-        pool = cmd._build_name_pool(500, fake, rng)
-        sampled = cmd._zipf_sample(pool, 1000, rng)
+        sampled = _sampled_frame(1000, rng, name_csv)
         identities = cmd._assign_attributes(sampled, 1000, rng, fake, AS_OF)
         expanded = cmd._expand_clusters(identities, rng)
 
