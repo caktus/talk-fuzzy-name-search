@@ -94,6 +94,10 @@ uv run python manage.py seed_data --count 100000 --flush --seed 42 --as-of 2026-
 
 # DEBUG=False time uv run python manage.py seed_data --count 54000000 --flush --seed 42 --as-of 2026-01-01
 
+# Re-run the subsequent migrations to add indexes
+time uv run python manage.py migrate records 0003
+time uv run python manage.py migrate records 0004
+
 # Run
 uv run python manage.py runserver # Web demo (localhost:8000)
 uv run marimo edit demo.py # Interactive notebook
