@@ -824,6 +824,52 @@ def _():
     return
 
 
+@app.cell(hide_code=True)
+def _():
+    """
+    Postgres gives two ways to ask "how many edits apart are these names?".
+    levenshtein() always computes the FULL distance. levenshtein_less_equal(a,
+    b, max) stops early the instant the distance is known to exceed max, so a
+    "within 2 edits" constraint rejects most non-matches almost immediately.
+    Both return the same rows; less_equal just does less wasted CPU, and the
+    gap grows as names get longer or more different. That is why the app's
+    precision filter uses levenshtein_less_equal.
+    """
+    mo.md(r"""
+    ## `levenshtein()` vs `levenshtein_less_equal()`
+
+    Both answer "how many edits apart are these names?" -- but only one knows
+    when to stop.
+
+    ```sql
+    -- always computes the FULL edit distance, even when it's obviously large
+    SELECT levenshtein(last_name, 'SMYTH');
+
+    -- bails out the moment the distance exceeds 2, returning a value > 2
+    SELECT levenshtein_less_equal(last_name, 'SMYTH', 2);
+    ```
+
+    `levenshtein(a, b)` does the complete dynamic-programming work for every
+    pair. `levenshtein_less_equal(a, b, max)` stops early once the distance is
+    known to be bigger than `max` -- so for a small constraint like "<= 2",
+    nearly every non-match is rejected after a few operations instead of a full
+    pass. **Same matching rows, less CPU.**
+
+    **Measured on 1,000,000 sampled last names** -- same 979 rows for 'SMYTH':
+
+    | target (len)         | `levenshtein() <= 2` | `levenshtein_less_equal(..., 2) <= 2` |
+    | -------------------- | -------------------- | -------------------------------------- |
+    | `SMYTH` (5)          | ~ 31 ms          | ~ 27 ms (~15% faster)               |
+    | `CHARLOTTE` (9)      | ~ 40 ms          | ~ 25 ms (~1.6x faster)           |
+
+    The gap widens as names get longer or more different -- the early exit
+    doing its job. In the app this runs as a precision filter on top of an
+    indexed phonetic pre-filter, so it only sees the small survivor set, not
+    all 54M rows.
+    """)
+    return
+
+
 @app.cell
 def _():
     _df = mo.sql(
