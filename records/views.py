@@ -15,9 +15,9 @@ from django.http import HttpRequest, HttpResponse
 from django.template.response import TemplateResponse
 from django.utils.dateparse import parse_date
 
-from .models import TRIGRAM_SIMILARITY_CUTOFF, Person, apply_levenshtein_filter, build_unified_filter
+from .models import TRIGRAM_SIMILARITY_CUTOFF, CourtRecord, apply_levenshtein_filter, build_unified_filter
 
-# Person.objects.count() is a full-table COUNT(*) -- on the 54M-row demo
+# CourtRecord.objects.count() is a full-table COUNT(*) -- on the 54M-row demo
 # table that's a ~600ms sequential-ish scan, and it's on every page load.
 # The exact number doesn't matter for the UI, so cache it via Django's
 # cache framework for a while instead of re-counting on every request.
@@ -26,10 +26,10 @@ _TOTAL_RECORDS_CACHE_SECONDS = 300
 
 
 def _cached_total_records() -> int:
-    """Return Person.objects.count(), cached for a few minutes."""
+    """Return CourtRecord.objects.count(), cached for a few minutes."""
     count = cache.get(_TOTAL_RECORDS_CACHE_KEY)
     if count is None:
-        count = Person.objects.count()
+        count = CourtRecord.objects.count()
         cache.set(_TOTAL_RECORDS_CACHE_KEY, count, _TOTAL_RECORDS_CACHE_SECONDS)
     return count
 
@@ -98,12 +98,12 @@ def _parse_explain_modes(request: HttpRequest) -> list[str]:
     return valid if valid else ["prefix"]
 
 
-def _explain_queryset_for(modes: list[str], first_name: str, last_name: str, date_of_birth=None):
+def _explain_queryset_for(modes: list[str], first_name: str, last_name: str, date_of_birth=None, sort_field=""):
     """Build the exact queryset search_unified() runs for this mode set.
 
     Returns (queryset, kind) where kind is "main" (the OR-ed filter query,
-    with the Levenshtein precision filter and DOB applied the same way
-    search_unified applies them) or "trigram" (the separate KNN
+    with the Levenshtein precision filter, DOB and page sort applied the
+    same way search_unified applies them) or "trigram" (the separate KNN
     ORDER BY ... LIMIT 100 query). Returns (None, None) when
     search_unified() would run no query at all (e.g. Levenshtein checked
     without any base mode and no DOB).
@@ -114,22 +114,24 @@ def _explain_queryset_for(modes: list[str], first_name: str, last_name: str, dat
         # search_unified() runs trigram as a separate KNN ORDER BY query,
         # even alongside other base modes — that's the query users care
         # about for trigram, so it is the deterministic primary to explain.
-        tri_qs = Person.objects
+        tri_qs = CourtRecord.objects
         if date_of_birth:
             tri_qs = tri_qs.filter(date_of_birth=date_of_birth)
         return tri_qs.trigram_ordered(first_name, last_name)[:100], "trigram"
 
+    order_clause = (sort_field,) if sort_field else ()
+
     q = build_unified_filter(modes, first_name, last_name)
     if not q:
         if date_of_birth:
-            # DOB-only path (unchanged): explain the bare DOB filter.
-            return Person.objects.filter(date_of_birth=date_of_birth)[:100], "main"
+            # DOB-only path: explain the bare DOB filter (+ page sort).
+            return CourtRecord.objects.filter(date_of_birth=date_of_birth).order_by(*order_clause)[:100], "main"
         return None, None
 
-    qs = Person.objects.filter(q)
+    qs = CourtRecord.objects.filter(q)
     if date_of_birth:
         qs = qs.filter(date_of_birth=date_of_birth)
-    qs = qs.order_by("last_name", "first_name")
+    qs = qs.order_by(*order_clause)
     if "levenshtein" in modes:
         qs = apply_levenshtein_filter(qs, first_name, last_name)
     return qs[:100], "main"
@@ -145,13 +147,20 @@ def _get_enabled_modes(request: HttpRequest) -> list[str]:
     return enabled if enabled else list(DEFAULT_MODES)
 
 
-def _run_unified_search(modes: list[str], first_name: str, last_name: str, date_of_birth=None) -> dict:
+# Values for the ?sort= URL parameter on the results table headers.
+SORT_PARAMS = {"dob_asc": "date_of_birth", "dob_desc": "-date_of_birth"}
+
+
+def _run_unified_search(modes: list[str], first_name: str, last_name: str, date_of_birth=None, sort_param="") -> dict:
     """Execute a unified search with multiple modes and return annotated results."""
     if not first_name and not last_name and not date_of_birth:
         return {"results": [], "elapsed_ms": 0, "count": 0}
 
+    # The base query runs without a default ORDER BY (fast plan); the page
+    # sort is a user choice applied as a SQL ORDER BY on that query.
+    sort_field = SORT_PARAMS.get(sort_param, "")
     start = time.perf_counter()
-    persons = Person.objects.search_unified(modes, first_name, last_name, date_of_birth)
+    records = CourtRecord.objects.search_unified(modes, first_name, last_name, date_of_birth, sort_field)
     elapsed_ms = (time.perf_counter() - start) * 1000
 
     # Capture executed SQL (connection.queries works when DEBUG=True)
@@ -163,11 +172,11 @@ def _run_unified_search(modes: list[str], first_name: str, last_name: str, date_
 
     # Read match_source from SQL-annotated objects
     results = []
-    for person in persons:
-        source = getattr(person, "_match_source", 0) or 0
+    for record in records:
+        source = getattr(record, "_match_source", 0) or 0
         results.append(
             {
-                "person": person,
+                "person": record,
                 "match_source": source,
                 "has_prefix": bool(source & MATCH_BITS["prefix"]),
                 "has_legacy": bool(source & MATCH_BITS["legacy"]),
@@ -188,7 +197,7 @@ def _run_unified_search(modes: list[str], first_name: str, last_name: str, date_
                        SOUNDEX(UPPER(p.last_name)),
                        DAITCH_MOKOTOFF(UPPER(p.first_name)),
                        DAITCH_MOKOTOFF(UPPER(p.last_name))
-                FROM records_person p
+                FROM records_courtrecord p
                 WHERE p.id = ANY(%s)
             """,
                 [ids],
@@ -329,8 +338,12 @@ def _search_response(request: HttpRequest) -> HttpResponse:
     first_name = request.GET.get("first_name", "").strip()
     last_name = request.GET.get("last_name", "").strip()
     date_of_birth = parse_date(request.GET.get("date_of_birth", "").strip())
+    sort_param = request.GET.get("sort", "")
 
-    context = _run_unified_search(enabled_modes, first_name, last_name, date_of_birth)
+    context = _run_unified_search(enabled_modes, first_name, last_name, date_of_birth, sort_param)
+    context["sort"] = sort_param
+    # DOB header click toggles asc/desc (unsorted -> asc).
+    context["next_sort"] = "dob_desc" if sort_param == "dob_asc" else "dob_asc"
     mode_sql = {m: _mode_sql(m, first_name, last_name, m in enabled_modes) for m in SEARCH_MODES}
     phonetic_codes = _get_phonetic_codes(first_name, last_name)
     context.update(
@@ -390,6 +403,22 @@ def _get_help_examples() -> dict:
     return examples
 
 
+def _soundex_variant(last_name: str) -> str:
+    """Return a SOUNDEX-equivalent spelling of ``last_name``.
+
+    Dropping one of two adjacent identical letters leaves the SOUNDEX code
+    unchanged (the second copy is already ignored as an adjacent duplicate),
+    e.g. ``WALLER -> WALER``. When the name has no doubled letter it is
+    returned unchanged -- a name always matches its own SOUNDEX code. Either
+    way the result is SOUNDEX-equivalent to the input, so a search on it finds
+    the original person.
+    """
+    for i in range(len(last_name) - 1):
+        if last_name[i] == last_name[i + 1]:
+            return last_name[:i] + last_name[i + 1 :]
+    return last_name
+
+
 def _generate_help_examples() -> dict:
     """Generate dynamic examples for the help page."""
     from datetime import date
@@ -406,7 +435,7 @@ def _generate_help_examples() -> dict:
     seen_dobs = set()
     with connection.cursor() as c:
         for _attempt in range(3):
-            c.execute("SELECT date_of_birth FROM records_person TABLESAMPLE SYSTEM (0.01) LIMIT 1000")
+            c.execute("SELECT date_of_birth FROM records_courtrecord TABLESAMPLE SYSTEM (0.01) LIMIT 1000")
             for (d,) in c.fetchall():
                 if d not in seen_dobs:
                     seen_dobs.add(d)
@@ -419,7 +448,7 @@ def _generate_help_examples() -> dict:
             # Tiny table: the page sample yielded too few DOBs, and a
             # full-table RANDOM() sort is cheap when the table is this
             # small (0.01% of its pages is under one page).
-            c.execute("SELECT date_of_birth FROM records_person ORDER BY RANDOM() LIMIT 100")
+            c.execute("SELECT date_of_birth FROM records_courtrecord ORDER BY RANDOM() LIMIT 100")
             for (d,) in c.fetchall():
                 if d not in seen_dobs:
                     seen_dobs.add(d)
@@ -431,7 +460,7 @@ def _generate_help_examples() -> dict:
         if sampled_dobs:
             placeholders = ", ".join(["%s"] * len(sampled_dobs))
             c.execute(
-                "SELECT date_of_birth, COUNT(*) FROM records_person "
+                "SELECT date_of_birth, COUNT(*) FROM records_courtrecord "
                 f"WHERE date_of_birth IN ({placeholders}) GROUP BY date_of_birth",
                 sampled_dobs,
             )
@@ -451,7 +480,7 @@ def _generate_help_examples() -> dict:
     with connection.cursor() as c:
         c.execute(
             """
-            SELECT first_name, last_name FROM records_person
+            SELECT first_name, last_name FROM records_courtrecord
             WHERE date_of_birth = %s
             ORDER BY RANDOM() LIMIT 5
         """,
@@ -483,11 +512,11 @@ def _generate_help_examples() -> dict:
         }
     )
 
-    # Soundex: use a phonetic variant
+    # Soundex: use a SOUNDEX-equivalent spelling so the base person is found
+    # (see _soundex_variant). A naive "x" typo would change the SOUNDEX code
+    # and return nothing, which is why the old examples came back empty.
     soundex_fn = base_fn
-    soundex_ln = base_ln
-    if len(base_ln) > 4:
-        soundex_ln = base_ln[:2] + "x" + base_ln[3:]  # Simple typo
+    soundex_ln = _soundex_variant(base_ln)
     groups.append(
         {
             "label": "Phonetic",
@@ -499,11 +528,10 @@ def _generate_help_examples() -> dict:
         }
     )
 
-    # DM: use a different spelling
+    # DM: use the base name unchanged -- Daitch-Mokotoff of a name always
+    # matches itself, so the base person is reliably found.
     dm_fn = base_fn
     dm_ln = base_ln
-    if len(base_ln) > 4:
-        dm_ln = base_ln[:3] + "y" + base_ln[4:]  # Another typo
     groups.append(
         {
             "label": "Phonetic",
@@ -511,7 +539,7 @@ def _generate_help_examples() -> dict:
             "mode": "dm",
             "fn": dm_fn,
             "ln": dm_ln,
-            "desc": f"DM matches Slavic/Germanic variants of '{dm_fn} {dm_ln}'",
+            "desc": f"DM finds names that sound like '{dm_fn} {dm_ln}' (Slavic/Germanic variants)",
         }
     )
 
@@ -532,9 +560,10 @@ def _generate_help_examples() -> dict:
         }
     )
 
-    # Trigram: use a misspelling
+    # Trigram: use the base name unchanged -- similarity(x, x) = 1.0 clears
+    # the cutoff, so the base person is reliably found and ranked first.
     tri_fn = base_fn
-    tri_ln = base_ln[: max(2, len(base_ln) - 2)] + "x"
+    tri_ln = base_ln
     groups.append(
         {
             "label": "Fuzzy",
@@ -577,6 +606,7 @@ def search_explain(request: HttpRequest) -> HttpResponse:
     first_name = request.GET.get("first_name", "").strip()
     last_name = request.GET.get("last_name", "").strip()
     date_of_birth = parse_date(request.GET.get("date_of_birth", "").strip())
+    sort_field = SORT_PARAMS.get(request.GET.get("sort", ""), "")
 
     context = {
         "plan": None,
@@ -595,7 +625,7 @@ def search_explain(request: HttpRequest) -> HttpResponse:
         context["error"] = "Provide a first_name, last_name, and/or date_of_birth to explain a query."
         return TemplateResponse(request, "records/explain.html", context)
 
-    qs, kind = _explain_queryset_for(modes, first_name, last_name, date_of_birth)
+    qs, kind = _explain_queryset_for(modes, first_name, last_name, date_of_birth, sort_field)
 
     if qs is None:
         context["error"] = (

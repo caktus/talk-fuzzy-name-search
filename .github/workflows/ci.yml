@@ -92,5 +92,5 @@ jobs:
           uv run python manage.py seed_data --count 10000 --seed 42 --as-of 2026-01-01
           # seed_data trims to the exact --count target on an empty table,
           # so the count is deterministic.
-          uv run python manage.py shell -c "from records.models import Person; n = Person.objects.count(); print(f'person_count={n}'); assert n == 10000, f'expected 10000 rows, got {n}'"
+          uv run python manage.py shell -c "from records.models import CourtRecord; n = CourtRecord.objects.count(); print(f'record_count={n}'); assert n == 10000, f'expected 10000 rows, got {n}'"
           dropdb -h localhost -U postgres ci_seed_smoke

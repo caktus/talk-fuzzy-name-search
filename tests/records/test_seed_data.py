@@ -17,7 +17,7 @@ from django.db import connection
 
 from records.management.commands import seed_data
 from records.management.commands.seed_data import Command
-from records.models import Person
+from records.models import CourtRecord
 
 pytestmark = pytest.mark.django_db
 
@@ -365,9 +365,9 @@ class TestBulkInsert:
         identities = cmd._assign_attributes(sampled, 200, rng, fake, AS_OF)
         expanded = cmd._expand_clusters(identities, rng)
 
-        assert Person.objects.count() == 0
+        assert CourtRecord.objects.count() == 0
         cmd._bulk_insert(expanded)
-        assert Person.objects.count() == len(expanded)
+        assert CourtRecord.objects.count() == len(expanded)
 
     def test_bulk_insert_dob_not_null(self, name_csv):
         """All inserted records have a non-NULL date_of_birth."""
@@ -381,7 +381,7 @@ class TestBulkInsert:
         expanded = cmd._expand_clusters(identities, rng)
 
         cmd._bulk_insert(expanded)
-        null_count = Person.objects.filter(date_of_birth__isnull=True).count()
+        null_count = CourtRecord.objects.filter(date_of_birth__isnull=True).count()
         assert null_count == 0
 
     def test_bulk_insert_person_id_not_null(self, name_csv):
@@ -396,7 +396,7 @@ class TestBulkInsert:
         expanded = cmd._expand_clusters(identities, rng)
 
         cmd._bulk_insert(expanded)
-        null_count = Person.objects.filter(person_id__isnull=True).count()
+        null_count = CourtRecord.objects.filter(person_id__isnull=True).count()
         assert null_count == 0
 
     def test_bulk_insert_nickname_records(self, name_csv):
@@ -411,7 +411,7 @@ class TestBulkInsert:
         expanded = cmd._expand_clusters(identities, rng)
 
         cmd._bulk_insert(expanded)
-        with_nicknames = Person.objects.filter(nicknames__len__gt=0).count()
+        with_nicknames = CourtRecord.objects.filter(nicknames__len__gt=0).count()
         assert with_nicknames > 0
 
     def test_bulk_insert_middle_name_records(self, name_csv):
@@ -426,7 +426,7 @@ class TestBulkInsert:
         expanded = cmd._expand_clusters(identities, rng)
 
         cmd._bulk_insert(expanded)
-        with_middle = Person.objects.exclude(middle_name__isnull=True).count()
+        with_middle = CourtRecord.objects.exclude(middle_name__isnull=True).count()
         assert with_middle > len(expanded) * 0.8  # Allow some variance
 
     @staticmethod
@@ -448,13 +448,13 @@ class TestBulkInsert:
     def _spy_bulk_create(monkeypatch) -> list:
         """Record the row count of every bulk_create call the insert performs."""
         calls: list[int] = []
-        original = Person.objects.bulk_create
+        original = CourtRecord.objects.bulk_create
 
         def spy(objs, *args, **kwargs):
             calls.append(len(objs))
             return original(objs, *args, **kwargs)
 
-        monkeypatch.setattr(Person.objects, "bulk_create", spy)
+        monkeypatch.setattr(CourtRecord.objects, "bulk_create", spy)
         return calls
 
     def test_bulk_insert_20k_rows_single_chunk(self, monkeypatch):
@@ -467,14 +467,14 @@ class TestBulkInsert:
         cmd._bulk_insert(df)
 
         assert calls == [20_000]
-        assert Person.objects.count() == 20_000
+        assert CourtRecord.objects.count() == 20_000
         # Spot-check the round trip (including the datetime64 -> date conversion).
-        row = Person.objects.get(first_name="First1235")
+        row = CourtRecord.objects.get(first_name="First1235")
         assert row.last_name == "Last235"  # 1235 % 500
         assert row.date_of_birth == date(1990, 1, 1)
         assert row.middle_name is None  # odd index
-        assert Person.objects.get(first_name="First0").middle_name == "M"  # even index
-        assert Person.objects.get(first_name="First0").nicknames == ["Nick"]
+        assert CourtRecord.objects.get(first_name="First0").middle_name == "M"  # even index
+        assert CourtRecord.objects.get(first_name="First0").nicknames == ["Nick"]
         assert row.person_id is not None
 
     def test_bulk_insert_multi_chunk_with_small_batch_size(self, monkeypatch):
@@ -488,7 +488,7 @@ class TestBulkInsert:
         cmd._bulk_insert(df)
 
         assert calls == [5000, 5000, 2000]
-        assert Person.objects.count() == 12_000
+        assert CourtRecord.objects.count() == 12_000
 
 
 class TestBatchSizing:
@@ -518,26 +518,29 @@ class TestFlush:
 
     def test_flush_empties_table_and_restarts_sequence(self):
         """After a flush the table is empty and the id sequence restarts at 1."""
-        first = Person.objects.create(first_name="John", last_name="Smith", date_of_birth="1990-01-01")
-        second = Person.objects.create(first_name="Jane", last_name="Doe", date_of_birth="1985-06-20")
+        first = CourtRecord.objects.create(first_name="John", last_name="Smith", date_of_birth="1990-01-01")
+        second = CourtRecord.objects.create(first_name="Jane", last_name="Doe", date_of_birth="1985-06-20")
         assert second.id == first.id + 1
 
         Command._flush()
 
-        assert Person.objects.count() == 0
+        assert CourtRecord.objects.count() == 0
         with connection.cursor() as cursor:
+            # The id sequence keeps its pre-rename name (Django's RenameModel
+            # renames the table, not the owned sequence), so it is still
+            # records_person_id_seq even though the table is records_courtrecord.
             cursor.execute("SELECT last_value FROM records_person_id_seq")
             assert cursor.fetchone()[0] == 1
         # A fresh insert gets id 1 again (with DELETE the sequence would keep
         # advancing past first.id + 1).
-        new = Person.objects.create(first_name="Ann", last_name="Alfa", date_of_birth="1990-02-02")
+        new = CourtRecord.objects.create(first_name="Ann", last_name="Alfa", date_of_birth="1990-02-02")
         assert new.id == 1
 
     def test_flush_on_empty_table_is_a_noop(self):
         """Flushing an empty table does not error."""
-        assert Person.objects.count() == 0
+        assert CourtRecord.objects.count() == 0
         Command._flush()
-        assert Person.objects.count() == 0
+        assert CourtRecord.objects.count() == 0
 
 
 class TestReproducibility:

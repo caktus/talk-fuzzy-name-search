@@ -1,4 +1,4 @@
-"""Person model with phonetic name search.
+"""CourtRecord model with phonetic name search.
 
 Uses PostgreSQL's fuzzystrmatch extension (SOUNDEX, DAITCH_MOKOTOFF)
 directly in queries via functional GIN/B-tree indexes, rather than
@@ -46,7 +46,7 @@ def _trigram_similarity_filters(first_name: str, last_name: str) -> dict:
     return filters
 
 
-def _apply_trigram_similarity_filter(qs: PersonQuerySet, first_name: str, last_name: str) -> PersonQuerySet:
+def _apply_trigram_similarity_filter(qs: CourtRecordQuerySet, first_name: str, last_name: str) -> CourtRecordQuerySet:
     """Annotate similarity() on each provided name and cut below the threshold."""
     filters = _trigram_similarity_filters(first_name, last_name)
     if not filters:
@@ -68,7 +68,7 @@ def build_unified_filter(modes: list[str], first_name: str, last_name: str) -> Q
     unified search). Levenshtein and trigram are intentionally excluded:
     Levenshtein is a precision filter applied on top (see
     apply_levenshtein_filter) and trigram runs as a separate KNN ORDER BY
-    query (see PersonQuerySet.trigram_ordered).
+    query (see CourtRecordQuerySet.trigram_ordered).
 
     Returns an empty Q() when no base mode can build a condition.
     """
@@ -126,7 +126,7 @@ def build_unified_filter(modes: list[str], first_name: str, last_name: str) -> Q
     return q
 
 
-def apply_levenshtein_filter(qs: PersonQuerySet, first_name: str, last_name: str) -> PersonQuerySet:
+def apply_levenshtein_filter(qs: CourtRecordQuerySet, first_name: str, last_name: str) -> CourtRecordQuerySet:
     """Apply the Levenshtein precision filter (edit distance ≤ 2) as an AND.
 
     Exactly what search_unified() applies on top of the base modes: only the
@@ -143,12 +143,12 @@ def apply_levenshtein_filter(qs: PersonQuerySet, first_name: str, last_name: str
     return qs
 
 
-class PersonQuerySet(models.QuerySet):
-    """Custom QuerySet for Person with phonetic name search methods."""
+class CourtRecordQuerySet(models.QuerySet):
+    """Custom QuerySet for CourtRecord with phonetic name search methods."""
 
     def search_phonetic(
         self, first_name: str, last_name: str, date_of_birth: datetime.date | None = None
-    ) -> PersonQuerySet:
+    ) -> CourtRecordQuerySet:
         """Soundex + Levenshtein search using PostgreSQL fuzzystrmatch.
 
         Uses SOUNDEX() from the fuzzystrmatch extension for broad phonetic
@@ -164,7 +164,9 @@ class PersonQuerySet(models.QuerySet):
         """
         return self._phonetic_search(first_name, last_name, date_of_birth, is_array=False)
 
-    def search_dm(self, first_name: str, last_name: str, date_of_birth: datetime.date | None = None) -> PersonQuerySet:
+    def search_dm(
+        self, first_name: str, last_name: str, date_of_birth: datetime.date | None = None
+    ) -> CourtRecordQuerySet:
         """Daitch-Mokotoff + Levenshtein search using PostgreSQL fuzzystrmatch.
 
         Uses DAITCH_MOKOTOFF() from the fuzzystrmatch extension for broad
@@ -187,7 +189,7 @@ class PersonQuerySet(models.QuerySet):
         last_name: str,
         date_of_birth: datetime.date | None,
         is_array: bool,
-    ) -> PersonQuerySet:
+    ) -> CourtRecordQuerySet:
         """Shared phonetic + Levenshtein search."""
         if not first_name and not last_name and not date_of_birth:
             return self.none()
@@ -214,11 +216,11 @@ class PersonQuerySet(models.QuerySet):
 
     def _apply_phonetic_filter(
         self,
-        qs: PersonQuerySet,
+        qs: CourtRecordQuerySet,
         field_name: str,
         query_name: str,
         is_array: bool,
-    ) -> tuple[PersonQuerySet, bool]:
+    ) -> tuple[CourtRecordQuerySet, bool]:
         """Apply phonetic pre-filter + Levenshtein precision filter on one name field.
 
         Returns (filtered_queryset, whether_any_filter_was_applied).
@@ -261,7 +263,7 @@ class PersonQuerySet(models.QuerySet):
 
     def search_trigram(
         self, first_name: str, last_name: str, date_of_birth: datetime.date | None = None
-    ) -> PersonQuerySet:
+    ) -> CourtRecordQuerySet:
         """Trigram similarity search via pg_trgm KNN.
 
         Uses Django's built-in ``TrigramDistance`` (the ``<->`` KNN operator,
@@ -295,7 +297,7 @@ class PersonQuerySet(models.QuerySet):
 
         return qs
 
-    def trigram_ordered(self, first_name: str, last_name: str) -> PersonQuerySet:
+    def trigram_ordered(self, first_name: str, last_name: str) -> CourtRecordQuerySet:
         """Apply the pg_trgm KNN ORDER BY used by search_unified()'s trigram mode.
 
         Uses Django's built-in ``TrigramDistance`` (the ``<->`` operator).
@@ -313,7 +315,7 @@ class PersonQuerySet(models.QuerySet):
 
     def search_legacy(
         self, first_name: str, last_name: str, date_of_birth: datetime.date | None = None
-    ) -> PersonQuerySet:
+    ) -> CourtRecordQuerySet:
         """Legacy LIKE-based search (for comparison/benchmarking).
 
         Uses unindexed LIKE '%name%' queries -- intentionally slow
@@ -333,7 +335,7 @@ class PersonQuerySet(models.QuerySet):
 
     def search_exact(
         self, first_name: str, last_name: str, date_of_birth: datetime.date | None = None
-    ) -> PersonQuerySet:
+    ) -> CourtRecordQuerySet:
         """Exact startswith matching (fast, no fuzzy tolerance).
 
         Uses istartswith for prefix matching with B-tree index support.
@@ -356,7 +358,8 @@ class PersonQuerySet(models.QuerySet):
         first_name: str,
         last_name: str,
         date_of_birth: datetime.date | None = None,
-    ) -> list[Person]:
+        sort_field: str = "",
+    ) -> list[CourtRecord]:
         """Unified search combining multiple algorithms (OR-ed Q object; trigram rows merged in Python from a separate KNN query).
 
         Each enabled base mode adds its condition to an OR-ed Q object.
@@ -369,14 +372,20 @@ class PersonQuerySet(models.QuerySet):
         'William' (distance 4). See RECS-2026-08-14 P1-12 — nickname support
         would require variant-aware filtering.
 
+        There is no default ordering: with sort_field empty the rows come
+        back in DB order and the page sort (e.g. ?sort=dob_asc) is passed in
+        as sort_field and applied as a SQL ORDER BY on the base query.
+
         Args:
             modes: List of enabled mode names (e.g., ['prefix', 'soundex']).
             first_name: First name to search for.
             last_name: Last name to search for.
             date_of_birth: Optional DOB filter applied to all modes.
+            sort_field: Optional order_by field for the base query (e.g.
+                'date_of_birth' or '-date_of_birth'); empty = no ORDER BY.
 
         Returns:
-            A list of Person objects (deduplicated, limited to 100). Every path
+            A list of CourtRecord objects (deduplicated, limited to 100). Every path
             materializes and caps at 100, so callers get a bounded, already-
             fetched list and timing around the call covers the DB fetch.
         """
@@ -392,6 +401,10 @@ class PersonQuerySet(models.QuerySet):
         # use the exact same query construction as the search that ran.
         q = build_unified_filter(modes, first_name, last_name)
 
+        # Page sort (e.g. ?sort=dob_asc) applied as a SQL ORDER BY on the
+        # base query; empty = no ORDER BY (fastest plan, DB order).
+        order_clause = (sort_field,) if sort_field else ()
+
         if not q and "trigram" not in modes:
             # No base mode could build a condition (e.g. only Levenshtein is
             # checked). Levenshtein is a precision filter on top of base
@@ -399,17 +412,15 @@ class PersonQuerySet(models.QuerySet):
             # back to the bare DOB set — that would silently ignore the name.
             # Only a nameless DOB search returns the DOB-filtered set.
             if date_of_birth and not first_name and not last_name:
-                return list(self.filter(date_of_birth=date_of_birth)[:100])
+                return list(self.filter(date_of_birth=date_of_birth).order_by(*order_clause)[:100])
             return []
 
         # Build main queryset
         qs = self.filter(q)
         if date_of_birth:
             qs = qs.filter(date_of_birth=date_of_birth)
-        # Explicit, stable ordering for the main list (B6): the page must not
-        # render in arbitrary DB order. Rides the (last_name, first_name)
-        # composite index, so the ORDER BY + LIMIT stays cheap.
-        qs = qs.order_by("last_name", "first_name")
+        if order_clause:
+            qs = qs.order_by(*order_clause)
 
         # Levenshtein as a precision filter (AND) on top of the other modes
         if "levenshtein" in modes:
@@ -503,22 +514,35 @@ class PersonQuerySet(models.QuerySet):
                     if len(main_list) >= 100:
                         break
 
+        # Without a page sort, trigram rows (KNN distance order) are appended
+        # after the base rows. With a page sort (e.g. DOB), the top-up rows
+        # would break the page order, so the merged list is re-sorted — a
+        # cheap Python sort over at most 100 already-fetched rows; the base
+        # query's SQL ORDER BY still does the heavy lifting (cheap sort
+        # input before LIMIT).
+        if order_clause:
+            descending = order_clause[0].startswith("-")
+            field = order_clause[0].lstrip("-")
+            main_list.sort(key=lambda r: getattr(r, field), reverse=descending)
+
         return main_list
 
 
-class PersonManager(models.Manager):
-    """Manager for Person that uses PersonQuerySet."""
+class CourtRecordManager(models.Manager):
+    """Manager for CourtRecord that uses CourtRecordQuerySet."""
 
-    def get_queryset(self) -> PersonQuerySet:
-        return PersonQuerySet(self.model, using=self._db)
+    def get_queryset(self) -> CourtRecordQuerySet:
+        return CourtRecordQuerySet(self.model, using=self._db)
 
 
-class Person(models.Model):
-    """A person record for fuzzy name search.
+class CourtRecord(models.Model):
+    """A single raw court record for fuzzy name search.
 
-    Phonetic matching uses PostgreSQL's fuzzystrmatch extension
-    (SOUNDEX, DAITCH_MOKOTOFF) directly in queries via functional indexes,
-    rather than storing pre-computed tokens as columns.
+    This is NOT a unified person entity: a real person appears across many
+    duplicated court records (name variants, typos, aliases), so one person
+    maps to many rows. Phonetic matching uses PostgreSQL's fuzzystrmatch
+    extension (SOUNDEX, DAITCH_MOKOTOFF) directly in queries via functional
+    indexes, rather than storing pre-computed tokens as columns.
     """
 
     first_name = models.CharField(max_length=50)
@@ -541,7 +565,7 @@ class Person(models.Model):
         help_text="Links records representing the same real person (same DOB, name variants, typos)",
     )
 
-    objects = PersonManager.from_queryset(PersonQuerySet)()
+    objects = CourtRecordManager.from_queryset(CourtRecordQuerySet)()
 
     class Meta:
         indexes = [
@@ -599,8 +623,8 @@ class Person(models.Model):
             # B-tree index for person_id cluster lookups
             models.Index(fields=["person_id"], name="idx_person_person_id"),
         ]
-        verbose_name = "Person"
-        verbose_name_plural = "People"
+        verbose_name = "Court Record"
+        verbose_name_plural = "Court Records"
 
     def __str__(self) -> str:
         name_parts = [self.first_name, self.last_name]

@@ -111,14 +111,14 @@ Claim: `search_exact("John", "")` cannot use the composite `(UPPER(last_name), U
 Task-form SQL:
 
 ```sql
-EXPLAIN (ANALYZE, BUFFERS) SELECT id FROM records_person
+EXPLAIN (ANALYZE, BUFFERS) SELECT id FROM records_courtrecord
 WHERE UPPER(first_name) LIKE 'JOHN%' LIMIT 100;
 ```
 
 ```
 Limit  (actual time=1.682..3.826 rows=100.00 loops=1)
   Buffers: shared hit=10 read=93
-  ->  Index Scan using idx_person_name_prefix on records_person
+  ->  Index Scan using idx_person_name_prefix on records_courtrecord
         Index Cond: ((upper(first_name) ~>=~ 'JOHN') AND (upper(first_name) ~<~ 'JOHO'))
         Filter: (upper(first_name) ~~ 'JOHN%')
         Index Searches: 2
@@ -131,7 +131,7 @@ The actual UI query (prefix mode in `search_unified`) also sorts by `last_name, 
 
 ```sql
 SELECT ..., (CASE WHEN UPPER(first_name) LIKE 'JOHN%' THEN 1 ELSE 0 END) AS _match_source
-FROM records_person
+FROM records_courtrecord
 WHERE UPPER(first_name) LIKE 'JOHN%' ORDER BY last_name, first_name LIMIT 100;
 ```
 
@@ -139,7 +139,7 @@ WHERE UPPER(first_name) LIKE 'JOHN%' ORDER BY last_name, first_name LIMIT 100;
 Limit  (actual time=378.724..378.732 rows=100.00 loops=1)
   Buffers: shared hit=11741 read=120749
   ->  Sort  (Sort Key: last_name, first_name; Sort Method: top-N heapsort  Memory: 38kB)
-        ->  Index Scan using idx_person_name_prefix on records_person
+        ->  Index Scan using idx_person_name_prefix on records_courtrecord
               Index Cond: ((upper(first_name) ~>=~ 'JOHN') AND (upper(first_name) ~<~ 'JOHO'))
               Index Searches: 2013
               (actual time=0.054..356.905 rows=157781.00 loops=1)
@@ -157,7 +157,7 @@ Claim: the docstring's "incremental sort via the last_name GiST index" is doubtf
 Dual-name SQL (as run by trigram mode in `search_unified`):
 
 ```sql
-EXPLAIN (ANALYZE, BUFFERS) SELECT id FROM records_person
+EXPLAIN (ANALYZE, BUFFERS) SELECT id FROM records_courtrecord
 ORDER BY (last_name <-> 'Smith'), (first_name <-> 'John') LIMIT 100;
 ```
 
@@ -168,7 +168,7 @@ Limit  (actual time=14047.929..14047.938 rows=100.00 loops=1)
         Sort Key: ((last_name <-> 'Smith')), ((first_name <-> 'John'))
         Presorted Key: ((last_name <-> 'Smith'))
         Pre-sorted Groups: 1  Sort Method: top-N heapsort  Peak Memory: 29kB
-        ->  Index Scan using idx_person_last_name_trgm on records_person
+        ->  Index Scan using idx_person_last_name_trgm on records_courtrecord
               Order By: (last_name <-> 'Smith')
               Index Searches: 1
               (actual time=0.580..14020.359 rows=52281.00 loops=1)
@@ -180,14 +180,14 @@ Not a seq scan: PG 18 picks the KNN index scan on `idx_person_last_name_trgm` fo
 Single-name contrast (the docstring's fast path — confirmed):
 
 ```sql
-EXPLAIN (ANALYZE, BUFFERS) SELECT id FROM records_person
+EXPLAIN (ANALYZE, BUFFERS) SELECT id FROM records_courtrecord
 ORDER BY (last_name <-> 'Smith') LIMIT 100;
 ```
 
 ```
 Limit  (actual time=0.559..6.819 rows=100.00 loops=1)
   Buffers: shared hit=22 read=278
-  ->  Index Scan using idx_person_last_name_trgm on records_person
+  ->  Index Scan using idx_person_last_name_trgm on records_courtrecord
         Order By: (last_name <-> 'Smith')
         Index Searches: 1
   Execution Time: 7.263 ms

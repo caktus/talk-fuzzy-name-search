@@ -29,7 +29,7 @@ with app.setup(hide_code=True):
     from django.db.models import TextField
     from django.db.models.functions import Cast
 
-    from records.models import Person
+    from records.models import CourtRecord
 
 
 @app.cell
@@ -323,6 +323,41 @@ def _():
 @app.cell
 def _():
     """
+    Here's the concrete cost of that "fuzzy" problem. The portal has a
+    "sounds like" toggle. Turn it off and a name search returns a small,
+    correct set of records. Turn it on and that same search balloons to 200+
+    hits that are mostly false positives — and the portal hard-caps the list
+    at 200 records. So instead of helping, "sounds like" drowns attorneys in
+    irrelevant records and risks hiding the ones they actually need. This
+    screenshot makes that tradeoff tangible: our tool keeps recall high without
+    the noise.
+    """
+    # When the screenshot is ready, save it as visuals/portal-soundslike.png and
+    # swap the placeholder below for the mo.image call (uncomment this line):
+    # mo.image((visuals / "portal-soundslike.png").absolute(), width="100%")
+    mo.vstack(
+        [
+            mo.md("""
+        # The portal's "sounds like" search
+        """),
+            mo.md("""
+        ### 📸 Insert screenshot here
+
+        State portal "sounds like" results for one name — 200+ hits, mostly
+        false positives.
+
+        **To insert:** save the screenshot as `visuals/portal-soundslike.png`,
+        then replace this placeholder with
+        `mo.image((visuals / "portal-soundslike.png").absolute(), width="100%")`.
+        """),
+        ]
+    )
+    return
+
+
+@app.cell
+def _():
+    """
     So why is finding everyone so hard? In our case, we were dealing with a
     database of over 50 million North Carolina court records, and searching by
     name in a dataset that size is not trivial.
@@ -461,7 +496,108 @@ def _():
 
 @app.cell
 def _():
+    """
+    Where does all this court data come from?
+
+    The production system searches 54 million+ real North Carolina court
+    records. We purchased that data from the state's courts -- the NC Courts
+    Remote Public Access Program (RPA extract access) -- the same public
+    channel attorneys already use to pull records. Keep it plain context:
+    no schemas, batch windows, or fee details.
+    """
+    mo.vstack(
+        [
+            mo.md("# Where the data comes from"),
+            mo.md("""
+    The system searches **54 million+ real North Carolina court records**.
+
+    We **purchased** that data from the state's courts -- the **NC Courts
+    Remote Public Access Program (RPA extract access)** -- the same public
+    channel attorneys use to pull records.
+
+    [NC Courts RPA extract access](https://www.nccourts.gov/services/remote-public-access-program/rpa-extract-access)
+    """),
+        ]
+    )
+    return
+
+
+@app.cell
+def _():
+    """
+    Why is the demo data simulated?
+
+    We can't show real people's names in a public talk -- that's private,
+    sensitive information. So the demo runs against a SIMULATED 54-million-
+    record dataset instead. A deterministic generator builds it: same seed,
+    same data, exactly reproducible. It mirrors the shape of the real data --
+    a heavy tail of name frequencies, and the same person appearing across
+    several slightly-different records (typos, nicknames, aliases).
+    """
+    mo.vstack(
+        [
+            mo.md("# Why the demo data is simulated"),
+            mo.md("""
+    We can't show real people's names in a public talk -- that's private,
+    sensitive information.
+
+    So this demo runs on a **simulated 54M-record dataset**, not real records.
+
+    A **deterministic generator** builds it: same seed -> same data, exactly
+    reproducible. It mirrors the *shape* of the real data:
+
+    - a **heavy-tailed** name distribution -- a few very common names, a long
+      tail of rare ones
+    - the same **duplication** pattern -- one person appears across several
+      slightly-different records (typos, nicknames, aliases)
+
+    None of it is a real person.
+    """),
+        ]
+    )
+    return
+
+
+@app.cell
+def _():
     # Exploring our Demo DB
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    """
+    Key conceptual point — slow down and make it explicit.
+
+    What we search is NOT a clean, unified "Person" table. It is a pile of
+    raw court records. Every time a person's name gets entered into the
+    courts — different county, different clerk, different year — a new row is
+    created. So the same real person shows up across many duplicated records,
+    often with typos, nicknames, and aliases.
+
+    That duplication is exactly why the search is hard: "Amanda Morgan" is
+    not one row we look up; it is a cluster of rows we have to find and
+    de-duplicate. We model each row as a CourtRecord, not a Person, on
+    purpose — the name is a reminder that these are raw captures, not a
+    canonical identity.
+    """
+    mo.vstack(
+        [
+            mo.md("# What a “record” actually is"),
+            mo.md("""
+    We do **not** search a unified *Person* table. We search **raw court
+    records** — one row per appearance of a person in the courts.
+
+    The same real person shows up across **many duplicated records**: different
+    counties, clerks, years, typos, nicknames, and aliases. So **one person →
+    many rows**, and a name like *Amanda Morgan* is a *cluster* of rows we must
+    find and de-duplicate — not a single row.
+
+    Each row is modeled as a **`CourtRecord`** (not `Person`) on purpose: the
+    name is a reminder that these are raw captures, not a canonical identity.
+    """),
+        ]
+    )
     return
 
 
@@ -469,14 +605,14 @@ def _():
 def _():
     mo.md(r"""
     ```python
-    class Person(models.Model):
-        "A person record for fuzzy name search."
+    class CourtRecord(models.Model):
+        "A single raw court record (one capture of a person, not a unified person)."
 
         first_name = models.CharField(max_length=50)
         last_name = models.CharField(max_length=50)
         middle_name = models.CharField(max_length=50, blank=True)
         date_of_birth = models.DateField()
-        # Often one doesn't have a cannonical person_id to
+        # Often one doesn't have a canonical person_id to
         # link rows that are actually the same person, but we
         # included one for demo purposes.
         person_id = UUIDField(
@@ -511,7 +647,7 @@ def qs_to_df(qs, cols=None):
 @app.cell
 def _():
     qs_to_df(
-        Person.objects.filter(
+        CourtRecord.objects.filter(
             first_name__iexact="amanda",
             last_name__iexact="morgan",
         )[:1000]
@@ -523,7 +659,7 @@ def _():
 @app.cell
 def _():
     qs_to_df(
-        Person.objects.filter(
+        CourtRecord.objects.filter(
             first_name__icontains="amanda",
             last_name__icontains="morgan",
             date_of_birth="1993-10-02",
@@ -535,7 +671,7 @@ def _():
 
 @app.cell
 def _():
-    qs_to_df(Person.objects.filter(person_id="d2a81060-fde2-8f0b-71ba-aa32e474a46b")[:100])
+    qs_to_df(CourtRecord.objects.filter(person_id="d2a81060-fde2-8f0b-71ba-aa32e474a46b")[:100])
     # Filtering by person_id, one additional row for "AMAANDA" is found
     return
 
@@ -547,7 +683,7 @@ def _():
         SELECT
             *
         FROM
-            records_person
+            records_courtrecord
         WHERE
             LOWER(first_name) LIKE '%am%nda%'
             AND LOWER(last_name) LIKE '%morgan%'
@@ -601,7 +737,7 @@ def _():
         SELECT
             *
         FROM
-            records_person
+            records_courtrecord
         WHERE
             soundex (first_name) = soundex ('amanda')
             AND LOWER(last_name) LIKE '%morgan%'
@@ -620,7 +756,7 @@ def _():
         SELECT
             *
         FROM
-            records_person
+            records_courtrecord
         WHERE
             soundex (first_name) = soundex ('amanda')
             AND soundex (last_name) = soundex ('morgan')
@@ -688,6 +824,52 @@ def _():
     return
 
 
+@app.cell(hide_code=True)
+def _():
+    """
+    Postgres gives two ways to ask "how many edits apart are these names?".
+    levenshtein() always computes the FULL distance. levenshtein_less_equal(a,
+    b, max) stops early the instant the distance is known to exceed max, so a
+    "within 2 edits" constraint rejects most non-matches almost immediately.
+    Both return the same rows; less_equal just does less wasted CPU, and the
+    gap grows as names get longer or more different. That is why the app's
+    precision filter uses levenshtein_less_equal.
+    """
+    mo.md(r"""
+    ## `levenshtein()` vs `levenshtein_less_equal()`
+
+    Both answer "how many edits apart are these names?" -- but only one knows
+    when to stop.
+
+    ```sql
+    -- always computes the FULL edit distance, even when it's obviously large
+    SELECT levenshtein(last_name, 'SMYTH');
+
+    -- bails out the moment the distance exceeds 2, returning a value > 2
+    SELECT levenshtein_less_equal(last_name, 'SMYTH', 2);
+    ```
+
+    `levenshtein(a, b)` does the complete dynamic-programming work for every
+    pair. `levenshtein_less_equal(a, b, max)` stops early once the distance is
+    known to be bigger than `max` -- so for a small constraint like "<= 2",
+    nearly every non-match is rejected after a few operations instead of a full
+    pass. **Same matching rows, less CPU.**
+
+    **Measured on 1,000,000 sampled last names** -- same 979 rows for 'SMYTH':
+
+    | target (len)         | `levenshtein() <= 2` | `levenshtein_less_equal(..., 2) <= 2` |
+    | -------------------- | -------------------- | -------------------------------------- |
+    | `SMYTH` (5)          | ~ 31 ms          | ~ 27 ms (~15% faster)               |
+    | `CHARLOTTE` (9)      | ~ 40 ms          | ~ 25 ms (~1.6x faster)           |
+
+    The gap widens as names get longer or more different -- the early exit
+    doing its job. In the app this runs as a precision filter on top of an
+    indexed phonetic pre-filter, so it only sees the small survivor set, not
+    all 54M rows.
+    """)
+    return
+
+
 @app.cell
 def _():
     _df = mo.sql(
@@ -724,6 +906,135 @@ def _():
 
 @app.cell(hide_code=True)
 def _():
+    """
+    The Django-side payoff: the raw SQL functions become normal ORM querysets.
+    We wrap each PostgreSQL function as a tiny custom `Func` expression (the
+    function name plus its output field), and Django renders the SQL for us.
+    Trigrams are already built into Django; the other three are two-line
+    wrappers we add ourselves. All the code in these slides is verbatim from
+    the companion blog post, which uses `Person` as a stand-in for "your
+    model"; in this repo that model is `CourtRecord` (renamed from `Person`),
+    and every snippet below was run here against `CourtRecord`.
+    """
+    mo.md(r"""
+    # From raw SQL to the Django ORM
+
+    Wrap each PostgreSQL function as a tiny custom `Func` expression, then use
+    it in a normal queryset. Trigrams are **already built into Django**; the
+    other three are two-line wrappers we add.
+
+    > The code below is verbatim from the companion blog post, which uses
+    > `Person` as a stand-in for "your model". In this repo that model is
+    > **`CourtRecord`**; each snippet was run here against `CourtRecord`.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    """
+    These three live in records/expressions.py. Each is a two-line Func
+    subclass: the SQL function name and the field it returns. That's the entire
+    abstraction -- Django renders SOUNDEX(...), DAITCH_MOKOTOFF(...), and
+    levenshtein_less_equal(...) straight into the query. Trigrams need no
+    wrapper: django.contrib.postgres.search ships them.
+    """
+    mo.md(r"""
+    ```python
+    from django.contrib.postgres.fields import ArrayField
+    from django.db.models.expressions import Func
+    from django.db.models.fields import CharField, IntegerField, TextField
+
+
+    class Soundex(Func):
+        function = "SOUNDEX"
+        output_field = CharField()
+
+
+    class DaitchMokotoff(Func):
+        function = "DAITCH_MOKOTOFF"
+        output_field = ArrayField(TextField())
+
+
+    class LevenshteinLessEqual(Func):
+        function = "levenshtein_less_equal"
+        output_field = IntegerField()
+    ```
+
+    Trigrams are Django built-ins -- nothing to write:
+
+    ```python
+    from django.contrib.postgres.search import TrigramSimilarity, TrigramDistance
+    ```
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    """
+    One line per function. Soundex groups by the code the name sounds like; DM
+    matches on overlapping code arrays (that's the && behind __overlap); the
+    Levenshtein is a precision filter you AND on top, never a standalone search;
+    trigrams rank by distance and you take the top N. All four were run live in
+    the 54M demo -- the measured row counts are under each example.
+    """
+    mo.md(r"""
+    **Soundex** -- group names by the code they sound like:
+
+    ```python
+    from django.db.models import F, Value
+    from django.db.models.functions import Upper
+    from .expressions import Soundex
+
+    CourtRecord.objects.annotate(
+        last_sdx=Soundex(Upper(F("last_name")))
+    ).filter(last_sdx=Soundex(Value("Smyth")))
+    # matches Smith, Smyth, Smythe, and Smidt -- all code S530
+    ```
+    *Verified against `CourtRecord` in the 54M demo: 161,296 rows.*
+
+    **Daitch-Mokotoff** -- match on overlapping code arrays (`__overlap` is the `&&`):
+
+    ```python
+    from .expressions import DaitchMokotoff
+
+    CourtRecord.objects.annotate(
+        last_dm=DaitchMokotoff(Upper(F("last_name")))
+    ).filter(last_dm__overlap=["740000"])
+    # matches both Weiss and Weiß, which share code 740000
+    ```
+    *Verified against `CourtRecord` in the 54M demo: 487,874 rows.*
+
+    **Levenshtein** -- a precision filter on top of the broader matches:
+
+    ```python
+    from .expressions import LevenshteinLessEqual
+
+    CourtRecord.objects.annotate(
+        last_dist=LevenshteinLessEqual(Upper(F("last_name")), Value("SMYTH"), Value(2))
+    ).filter(last_dist__lte=2)
+    # keeps Smith (1), Smyth (0), Smythe (1); drops anything farther
+    ```
+    *Verified against `CourtRecord` in the 54M demo: 53,922 rows.*
+
+    **Trigrams** -- rank by closeness, take the top N:
+
+    ```python
+    from django.contrib.postgres.search import TrigramDistance
+
+    CourtRecord.objects.annotate(
+        last_dist=TrigramDistance(F("last_name"), Value("Smith"))
+    ).order_by("last_dist")[:20]
+    # the 20 closest last names to "Smith"
+    ```
+    *Verified against `CourtRecord` in the 54M demo: returns the 20 closest rows.*
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _():
     mo.md(r"""
     # Putting it together
 
@@ -739,7 +1050,7 @@ def _():
         SELECT
             *
         FROM
-            records_person
+            records_courtrecord
         WHERE
             -- Find similar-sounding first and last names
             daitch_mokotoff (upper(first_name)) && daitch_mokotoff ('AMANDA')

@@ -95,7 +95,7 @@ Replaced tab-based search with **checkbox-based mode selection**. Each algorithm
 
 | File                                             | Purpose                                                              |
 | ------------------------------------------------ | -------------------------------------------------------------------- |
-| `records/models.py`                              | Person model, QuerySet search methods, functional indexes            |
+| `records/models.py`                              | CourtRecord model, QuerySet search methods, functional indexes       |
 | `records/views.py`                               | Unified search view, match_source annotation, mode config, help page |
 | `records/expressions.py`                         | ORM wrappers for Levenshtein, Soundex, DM                            |
 | `records/phonetics.py`                           | NICKNAME_MAP, resolve_variants()                                     |
