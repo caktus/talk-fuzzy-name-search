@@ -151,7 +151,7 @@ def _run_unified_search(modes: list[str], first_name: str, last_name: str, date_
         return {"results": [], "elapsed_ms": 0, "count": 0}
 
     start = time.perf_counter()
-    persons = CourtRecord.objects.search_unified(modes, first_name, last_name, date_of_birth)
+    records = CourtRecord.objects.search_unified(modes, first_name, last_name, date_of_birth)
     elapsed_ms = (time.perf_counter() - start) * 1000
 
     # Capture executed SQL (connection.queries works when DEBUG=True)
@@ -163,11 +163,11 @@ def _run_unified_search(modes: list[str], first_name: str, last_name: str, date_
 
     # Read match_source from SQL-annotated objects
     results = []
-    for person in persons:
-        source = getattr(person, "_match_source", 0) or 0
+    for record in records:
+        source = getattr(record, "_match_source", 0) or 0
         results.append(
             {
-                "person": person,
+                "person": record,
                 "match_source": source,
                 "has_prefix": bool(source & MATCH_BITS["prefix"]),
                 "has_legacy": bool(source & MATCH_BITS["legacy"]),

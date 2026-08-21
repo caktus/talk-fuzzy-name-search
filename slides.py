@@ -987,7 +987,7 @@ def _():
     from django.db.models.functions import Upper
     from .expressions import Soundex
 
-    Person.objects.annotate(
+    CourtRecord.objects.annotate(
         last_sdx=Soundex(Upper(F("last_name")))
     ).filter(last_sdx=Soundex(Value("Smyth")))
     # matches Smith, Smyth, Smythe, and Smidt -- all code S530
@@ -999,7 +999,7 @@ def _():
     ```python
     from .expressions import DaitchMokotoff
 
-    Person.objects.annotate(
+    CourtRecord.objects.annotate(
         last_dm=DaitchMokotoff(Upper(F("last_name")))
     ).filter(last_dm__overlap=["740000"])
     # matches both Weiss and Weiß, which share code 740000
@@ -1011,7 +1011,7 @@ def _():
     ```python
     from .expressions import LevenshteinLessEqual
 
-    Person.objects.annotate(
+    CourtRecord.objects.annotate(
         last_dist=LevenshteinLessEqual(Upper(F("last_name")), Value("SMYTH"), Value(2))
     ).filter(last_dist__lte=2)
     # keeps Smith (1), Smyth (0), Smythe (1); drops anything farther
@@ -1023,7 +1023,7 @@ def _():
     ```python
     from django.contrib.postgres.search import TrigramDistance
 
-    Person.objects.annotate(
+    CourtRecord.objects.annotate(
         last_dist=TrigramDistance(F("last_name"), Value("Smith"))
     ).order_by("last_dist")[:20]
     # the 20 closest last names to "Smith"

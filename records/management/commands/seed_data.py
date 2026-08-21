@@ -1,4 +1,4 @@
-"""Seed the database with realistic person records for demo/benchmarking.
+"""Seed the database with realistic court records for demo/benchmarking.
 
 Usage:
     python manage.py seed_data --count 100000 --flush
@@ -65,7 +65,7 @@ SAMPLE_CASES_COUNT_LIMIT = 1_000_000  # skip post-seed sample cases above this -
 
 class Command(BaseCommand):
     help = (
-        "Seed the database with realistic person records. Names: deduped pool sampled "
+        "Seed the database with realistic court records. Names: deduped pool sampled "
         "with a Zipf(a=1.1) heavy tail. Fully reproducible from the (seed, count, as-of) triple."
     )
 
@@ -126,7 +126,7 @@ class Command(BaseCommand):
             self._flush()
             self.stdout.write(f"Flushed {deleted:,} existing records (TRUNCATE records_courtrecord RESTART IDENTITY)")
 
-        self.stdout.write(f"Generating {count:,} person records (seed={rng_seed}, as-of={as_of})...")
+        self.stdout.write(f"Generating {count:,} court records (seed={rng_seed}, as-of={as_of})...")
         start = time.perf_counter()
         self._seed(count, rng_seed, as_of)
         elapsed = time.perf_counter() - start
@@ -147,7 +147,7 @@ class Command(BaseCommand):
     # ------------------------------------------------------------------
 
     def _seed(self, count: int, rng_seed: int, as_of: date) -> None:
-        """Generate and bulk-create person records using Polars.
+        """Generate and bulk-create court records using Polars.
 
         --count is the target number of *final rows* (after cluster expansion).
         Identities are generated in batches; each batch is expanded and inserted

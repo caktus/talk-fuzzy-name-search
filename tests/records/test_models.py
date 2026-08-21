@@ -13,10 +13,10 @@ from tests.records.factories import CourtRecordFactory
 pytestmark = pytest.mark.django_db
 
 
-class TestPersonModel:
+class TestCourtRecordModel:
     """Characterize CourtRecord model creation and behavior."""
 
-    def test_create_person_minimal(self):
+    def test_create_court_record_minimal(self):
         """CourtRecord can be created with just first_name, last_name, and date_of_birth."""
         person = CourtRecordFactory.create(
             first_name="John",
@@ -28,7 +28,7 @@ class TestPersonModel:
         assert person.nicknames == []
         assert person.date_of_birth is not None
 
-    def test_create_person_with_middle_name(self):
+    def test_create_court_record_with_middle_name(self):
         """CourtRecord supports middle_name field."""
         person = CourtRecord.objects.create(
             first_name="John",
@@ -38,7 +38,7 @@ class TestPersonModel:
         )
         assert person.middle_name == "Michael"
 
-    def test_create_person_with_nicknames(self):
+    def test_create_court_record_with_nicknames(self):
         """CourtRecord supports nicknames ArrayField."""
         person = CourtRecord.objects.create(
             first_name="Bill",
@@ -49,7 +49,7 @@ class TestPersonModel:
         assert "William" in person.nicknames
         assert "Billy" in person.nicknames
 
-    def test_person_str_representation(self):
+    def test_court_record_str_representation(self):
         """CourtRecord __str__ includes first and last name."""
         person = CourtRecord.objects.create(
             first_name="John",
@@ -60,7 +60,7 @@ class TestPersonModel:
         assert "Smith" in str(person)
 
 
-class TestPersonQuerySet:
+class TestCourtRecordQuerySet:
     """Characterize CourtRecordQuerySet search methods."""
 
     def test_search_phonetic_returns_queryset_empty_table(self):
