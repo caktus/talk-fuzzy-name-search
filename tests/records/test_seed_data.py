@@ -369,6 +369,57 @@ class TestBulkInsert:
         cmd._bulk_insert(expanded)
         assert CourtRecord.objects.count() == len(expanded)
 
+    def test_bulk_insert_does_not_retain_query_log(self, name_csv):
+        """Debug query logging must be suppressed during bulk inserts (memory regression).
+
+        Under DEBUG=True Django logs each 100k-row INSERT as a multi-MB SQL
+        string in connection.queries_log; _bulk_insert must swap in a bounded
+        deque for the duration of the inserts and restore the original (cleared)
+        deque afterwards. This leak OOM-killed a 54M seed run.
+        """
+        cmd = Command()
+        fake = pytest.importorskip("faker").Faker("en_US")
+        fake.seed_instance(42)
+        rng = np.random.default_rng(42)
+
+        sampled = _sampled_frame(200, rng, name_csv)
+        identities = cmd._assign_attributes(sampled, 200, rng, fake, AS_OF)
+        expanded = cmd._expand_clusters(identities, rng)
+
+        original_log = connection.queries_log
+        # Force debug query logging on (tests run with DEBUG=False) and ensure
+        # the log is being populated.
+        connection.force_debug_cursor = True
+        try:
+            Person.objects.count()
+            assert len(original_log) >= 1
+
+            # Capture what the log is while an insert runs.
+            seen = {}
+            from django.db.models.query import QuerySet
+
+            real_bulk_create = QuerySet.bulk_create
+
+            def spy(self, objs, **kwargs):
+                seen["log"] = connection.queries_log
+                return real_bulk_create(self, objs, **kwargs)
+
+            QuerySet.bulk_create = spy
+            try:
+                cmd._bulk_insert(expanded)
+            finally:
+                QuerySet.bulk_create = real_bulk_create
+        finally:
+            connection.force_debug_cursor = False
+
+        assert Person.objects.count() == len(expanded)
+        # During inserts the log was a minimal deque, not the original.
+        assert seen["log"] is not original_log
+        assert seen["log"].maxlen == 1
+        # Afterwards the original deque is restored and cleared.
+        assert connection.queries_log is original_log
+        assert len(original_log) == 0
+
     def test_bulk_insert_dob_not_null(self, name_csv):
         """All inserted records have a non-NULL date_of_birth."""
         cmd = Command()
@@ -541,6 +592,38 @@ class TestFlush:
         assert CourtRecord.objects.count() == 0
         Command._flush()
         assert CourtRecord.objects.count() == 0
+
+
+class TestDebugWarning:
+    """handle() warns when seeding a large count under DEBUG=True."""
+
+    def test_warns_on_large_count_with_debug(self, monkeypatch):
+        import io
+
+        from django.conf import settings
+
+        monkeypatch.setattr(settings, "DEBUG", True)
+        cmd = Command(stdout=io.StringIO())
+        monkeypatch.setattr(Command, "_seed", lambda self, *a, **k: None)
+        monkeypatch.setattr(cmd, "_print_sample_cases", lambda: None)
+
+        cmd.handle(count=2_000_000, flush=False, seed=42, as_of=None, no_cases=True, print_cases=False)
+
+        assert "DEBUG = True" in cmd.stdout.getvalue()
+
+    def test_no_warning_when_debug_off(self, monkeypatch):
+        import io
+
+        from django.conf import settings
+
+        monkeypatch.setattr(settings, "DEBUG", False)
+        cmd = Command(stdout=io.StringIO())
+        monkeypatch.setattr(Command, "_seed", lambda self, *a, **k: None)
+        monkeypatch.setattr(cmd, "_print_sample_cases", lambda: None)
+
+        cmd.handle(count=2_000_000, flush=False, seed=42, as_of=None, no_cases=True, print_cases=False)
+
+        assert "DEBUG = True" not in cmd.stdout.getvalue()
 
 
 class TestReproducibility:

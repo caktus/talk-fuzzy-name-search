@@ -59,6 +59,7 @@ from pathlib import Path
 
 import numpy as np
 import polars as pl
+from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection
 from faker import Faker
@@ -148,6 +149,15 @@ class Command(BaseCommand):
             deleted = CourtRecord.objects.count()
             self._flush()
             self.stdout.write(f"Flushed {deleted:,} existing records (TRUNCATE records_courtrecord RESTART IDENTITY)")
+
+        if settings.DEBUG and count > 1_000_000:
+            self.stdout.write(
+                self.style.WARNING(
+                    f"WARNING: running seed_data --count {count:,} with DEBUG = True. Query logging is "
+                    "suppressed during bulk inserts, but DEBUG still adds per-query overhead; run with "
+                    "DEBUG=False for large seeds."
+                )
+            )
 
         self.stdout.write(f"Generating {count:,} court records (seed={rng_seed}, as-of={as_of})...")
         start = time.perf_counter()
@@ -475,7 +485,18 @@ class Command(BaseCommand):
         """Bulk-insert records from a Polars DataFrame in batches.
 
         Uses numpy column access for faster iteration than iter_rows.
+
+        Runs with debug query logging suppressed: under DEBUG=True, Django wraps
+        every cursor in a CursorDebugWrapper that appends the full interpolated
+        SQL of each query to connection.queries_log, and each 100k-row INSERT
+        is a ~10-23 MB string. The log deque only evicts at its 9000-entry
+        limit, so at 54M rows (~540 inserts) it retained ~6-13 GB of SQL text
+        and OOM-killed the run. We swap in a minimal deque for the duration of
+        the inserts — CursorDebugWrapper does a live self.db.queries_log lookup
+        on each query, so this bounds retention to one entry — then restore
+        and clear the original deque.
         """
+        from collections import deque
         from itertools import islice
 
         total = len(df)
@@ -495,25 +516,31 @@ class Command(BaseCommand):
         inserted = 0
         row_iter = iter(range(total))
 
-        while True:
-            batch_indices = list(islice(row_iter, BATCH_SIZE))
-            if not batch_indices:
-                break
+        prev_log = connection.queries_log
+        connection.queries_log = deque(maxlen=1)  # bound retained INSERT SQL to one entry
+        try:
+            while True:
+                batch_indices = list(islice(row_iter, BATCH_SIZE))
+                if not batch_indices:
+                    break
 
-            records = [
-                CourtRecord(
-                    first_name=fn_arr[i],
-                    last_name=ln_arr[i],
-                    middle_name=None if mn_arr[i] is None else mn_arr[i],
-                    date_of_birth=dob_arr[i],
-                    nicknames=list(nick_arr[i]) if nick_arr[i].size else [],
-                    person_id=pid_arr[i],
-                )
-                for i in batch_indices
-            ]
-            CourtRecord.objects.bulk_create(records)
-            inserted += len(records)
-            self.stdout.write(f"    ... {inserted:,} / {total:,} records inserted")
+                records = [
+                    CourtRecord(
+                        first_name=fn_arr[i],
+                        last_name=ln_arr[i],
+                        middle_name=None if mn_arr[i] is None else mn_arr[i],
+                        date_of_birth=dob_arr[i],
+                        nicknames=list(nick_arr[i]) if nick_arr[i].size else [],
+                        person_id=pid_arr[i],
+                    )
+                    for i in batch_indices
+                ]
+                CourtRecord.objects.bulk_create(records)
+                inserted += len(records)
+                self.stdout.write(f"    ... {inserted:,} / {total:,} records inserted")
+        finally:
+            connection.queries_log = prev_log
+            prev_log.clear()
 
     # ------------------------------------------------------------------
     # Sample search cases

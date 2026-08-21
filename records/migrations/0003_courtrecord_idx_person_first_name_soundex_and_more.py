@@ -5,38 +5,65 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('records', '0002_enable_extensions'),
+        ("records", "0002_enable_extensions"),
     ]
 
     operations = [
         migrations.AddIndex(
-            model_name='courtrecord',
-            index=models.Index(models.Func(models.F('first_name'), function='SOUNDEX', template='SOUNDEX(UPPER(%(expressions)s))'), name='idx_person_first_name_soundex'),
+            model_name="courtrecord",
+            index=models.Index(
+                models.Func(models.F("first_name"), function="SOUNDEX", template="SOUNDEX(UPPER(%(expressions)s))"),
+                name="idx_person_first_name_soundex",
+            ),
         ),
         migrations.AddIndex(
-            model_name='courtrecord',
-            index=models.Index(models.Func(models.F('last_name'), function='SOUNDEX', template='SOUNDEX(UPPER(%(expressions)s))'), name='idx_person_last_name_soundex'),
+            model_name="courtrecord",
+            index=models.Index(
+                models.Func(models.F("last_name"), function="SOUNDEX", template="SOUNDEX(UPPER(%(expressions)s))"),
+                name="idx_person_last_name_soundex",
+            ),
         ),
         migrations.AddIndex(
-            model_name='courtrecord',
-            index=django.contrib.postgres.indexes.GinIndex(models.Func(models.F('first_name'), function='DAITCH_MOKOTOFF', template='DAITCH_MOKOTOFF(UPPER(%(expressions)s))'), name='idx_person_first_name_dm'),
+            model_name="courtrecord",
+            index=django.contrib.postgres.indexes.GinIndex(
+                models.Func(
+                    models.F("first_name"),
+                    function="DAITCH_MOKOTOFF",
+                    template="DAITCH_MOKOTOFF(UPPER(%(expressions)s))",
+                ),
+                name="idx_person_first_name_dm",
+            ),
         ),
         migrations.AddIndex(
-            model_name='courtrecord',
-            index=django.contrib.postgres.indexes.GinIndex(models.Func(models.F('last_name'), function='DAITCH_MOKOTOFF', template='DAITCH_MOKOTOFF(UPPER(%(expressions)s))'), name='idx_person_last_name_dm'),
+            model_name="courtrecord",
+            index=django.contrib.postgres.indexes.GinIndex(
+                models.Func(
+                    models.F("last_name"),
+                    function="DAITCH_MOKOTOFF",
+                    template="DAITCH_MOKOTOFF(UPPER(%(expressions)s))",
+                ),
+                name="idx_person_last_name_dm",
+            ),
         ),
         migrations.AddIndex(
-            model_name='courtrecord',
-            index=models.Index(django.contrib.postgres.indexes.OpClass(models.Func(models.F('last_name'), function='UPPER'), name='text_pattern_ops'), django.contrib.postgres.indexes.OpClass(models.Func(models.F('first_name'), function='UPPER'), name='text_pattern_ops'), name='idx_person_name_prefix'),
+            model_name="courtrecord",
+            index=models.Index(
+                django.contrib.postgres.indexes.OpClass(
+                    models.Func(models.F("last_name"), function="UPPER"), name="text_pattern_ops"
+                ),
+                django.contrib.postgres.indexes.OpClass(
+                    models.Func(models.F("first_name"), function="UPPER"), name="text_pattern_ops"
+                ),
+                name="idx_person_name_prefix",
+            ),
         ),
         migrations.AddIndex(
-            model_name='courtrecord',
-            index=models.Index(fields=['date_of_birth'], name='idx_person_date_of_birth'),
+            model_name="courtrecord",
+            index=models.Index(fields=["date_of_birth"], name="idx_person_date_of_birth"),
         ),
         migrations.AddIndex(
-            model_name='courtrecord',
-            index=models.Index(fields=['person_id'], name='idx_person_person_id'),
+            model_name="courtrecord",
+            index=models.Index(fields=["person_id"], name="idx_person_person_id"),
         ),
     ]

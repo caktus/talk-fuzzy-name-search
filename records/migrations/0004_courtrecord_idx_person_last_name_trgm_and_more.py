@@ -5,18 +5,21 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
-        ('records', '0003_courtrecord_idx_person_first_name_soundex_and_more'),
+        ("records", "0003_courtrecord_idx_person_first_name_soundex_and_more"),
     ]
 
     operations = [
         migrations.AddIndex(
-            model_name='courtrecord',
-            index=django.contrib.postgres.indexes.GistIndex(fields=['last_name'], name='idx_person_last_name_trgm', opclasses=['gist_trgm_ops']),
+            model_name="courtrecord",
+            index=django.contrib.postgres.indexes.GistIndex(
+                fields=["last_name"], name="idx_person_last_name_trgm", opclasses=["gist_trgm_ops"]
+            ),
         ),
         migrations.AddIndex(
-            model_name='courtrecord',
-            index=django.contrib.postgres.indexes.GistIndex(fields=['first_name'], name='idx_person_first_name_trgm', opclasses=['gist_trgm_ops']),
+            model_name="courtrecord",
+            index=django.contrib.postgres.indexes.GistIndex(
+                fields=["first_name"], name="idx_person_first_name_trgm", opclasses=["gist_trgm_ops"]
+            ),
         ),
     ]
