@@ -108,9 +108,6 @@ uv run python manage.py runserver # Web demo (localhost:8000)
 uv run pytest tests/ # Test suite
 ```
 
-The pre-rewrite CSV pipeline lives in `scripts/legacy/` for reference; it is
-not part of this flow (see `scripts/legacy/README.md`).
-
 ## Sharing the demo data
 
 On the machine that generated the data:
@@ -145,7 +142,6 @@ uv run marimo edit --watch --host 0.0.0.0 slides.py
 
 - **`records/`** -- Django app with `CourtRecord` model, the `search_unified()` search API, and web views
 - **`slides.py`** -- Marimo slide deck for the conference presentation (drives the same `CourtRecord` model as the web UI)
-- **`scripts/legacy/`** -- Pre-rewrite CSV data pipeline (superseded by `manage.py seed_data`)
 - **`tests/`** -- Test suite
 
 ## Architecture
