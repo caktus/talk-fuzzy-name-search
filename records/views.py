@@ -129,8 +129,8 @@ def _run_unified_search(modes: list[str], first_name: str, last_name: str, date_
                 SELECT p.id,
                        SOUNDEX(UPPER(p.first_name)),
                        SOUNDEX(UPPER(p.last_name)),
-                       DAITCH_MOKOTOFF(UPPER(p.first_name)),
-                       DAITCH_MOKOTOFF(UPPER(p.last_name))
+                       COALESCE(DAITCH_MOKOTOFF(UPPER(p.first_name)), '{}'),
+                       COALESCE(DAITCH_MOKOTOFF(UPPER(p.last_name)), '{}')
                 FROM records_courtrecord p
                 WHERE p.id = ANY(%s)
             """,

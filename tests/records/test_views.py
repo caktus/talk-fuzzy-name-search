@@ -478,6 +478,22 @@ class TestPhoneticCodes:
         assert "phonetic_codes" in r
         assert "dm_fn" in r["phonetic_codes"]
 
+    def test_dm_mode_with_empty_first_name(self, client):
+        """Regression: DAITCH_MOKOTOFF(UPPER('')) returns NULL, and the batch
+        phonetic-code query previously crashed on `", ".join(None)` when a
+        result row had an empty first name (e.g. ?modes=dm&first_name=&last_name=smith)."""
+        CourtRecord.objects.create(
+            first_name="",
+            last_name="Smith",
+            date_of_birth=date(1990, 1, 1),
+        )
+        response = client.get("/search/?modes=dm&first_name=&last_name=smith")
+        assert response.status_code == 200
+        r = response.context["results"][0]
+        assert r["phonetic_codes"]["dm_fn"] == ""
+        assert r["phonetic_codes"]["dm_ln"] != ""
+        assert r["phonetic_codes"]["soundex_fn"] == ""
+
     def test_dm_codes_rendered_as_joined_strings(self, client):
         """B16: DM codes (text[] in SQL) are joined into human-readable strings,
         not Python list reprs like ['11 0', '10 0'], in both the query tooltip
