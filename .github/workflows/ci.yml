@@ -56,7 +56,28 @@ jobs:
         with:
           python-version: "3.14"
 
+      # Persists the uv package cache to the GitHub Actions cache. The cache
+      # key is derived automatically from the OS, Python version and the
+      # contents of the files matching cache-dependency-glob (uv.lock /
+      # pyproject.toml by default), so it invalidates exactly when
+      # dependencies change. prune-cache drops pre-built wheels before
+      # saving (they are re-fetched from PyPI, which is faster than the
+      # extra upload/download traffic).
       - uses: astral-sh/setup-uv@v10.0.1
+        with:
+          enable-cache: true
+          prune-cache: true
+
+      # pre-commit clones each hook repo into this cache dir; cache it
+      # keyed on the hook config so it only invalidates when hook repos
+      # or versions (revs) change.
+      - name: Cache pre-commit
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+          restore-keys: |
+            pre-commit-${{ runner.os }}-
 
       # --frozen fails if uv.lock is out of sync with pyproject.toml;
       # --all-groups installs the dev group (pytest, ruff, pre-commit, ...) --
@@ -84,6 +105,18 @@ jobs:
       # dataset the same way the README tells local devs (kagglehub is in the
       # dev group, already synced). Run from name_dataset/ so the CSVs land
       # where seed_data expects them. Only the seed smoke below needs them.
+      # kagglehub.dataset_download caches the source dataset in
+      # ~/.cache/kagglehub (its default cache dir) and serves it from there
+      # on subsequent calls, so on a cache hit this step skips the network
+      # download and only re-runs the polars filter step.
+      - name: Cache kagglehub dataset
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/kagglehub
+          key: kagglehub-${{ runner.os }}-${{ hashFiles('name_dataset/download_name_data.py') }}
+          restore-keys: |
+            kagglehub-${{ runner.os }}-
+
       - name: Generate name-frequency data
         run: |
           cd name_dataset
