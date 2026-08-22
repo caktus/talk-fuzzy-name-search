@@ -31,4 +31,8 @@ urlpatterns = [
 ]
 
 if HAS_DEBUG_TOOLBAR:
+    # Registered whenever the toolbar package is installed (it is not
+    # installed in the deployed --no-dev image, which is the gate that
+    # matters in production). Gating on settings.DEBUG here breaks tests,
+    # because the URLconf is imported lazily while DEBUG is overridden.
     urlpatterns.insert(0, path("__debug__/", include(debug_toolbar.urls)))
