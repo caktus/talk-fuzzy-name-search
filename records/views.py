@@ -8,6 +8,7 @@ Provides:
 """
 
 import time
+from datetime import date
 
 from django.core.cache import cache
 from django.db import connection
@@ -421,7 +422,6 @@ def _soundex_variant(last_name: str) -> str:
 
 def _generate_help_examples() -> dict:
     """Generate dynamic examples for the help page."""
-    from datetime import date
 
     # Pick a random DOB that gives us 5-20 results, without sorting the
     # whole table (B5). TABLESAMPLE SYSTEM takes a PERCENT (0-100), so

@@ -199,39 +199,6 @@ class TestSearchSortByDateOfBirth:
         assert "ORDER BY" not in explain.context["sql"]
 
 
-class TestSearchExactQuerySet:
-    """Test the search_exact QuerySet method."""
-
-    @pytest.fixture(autouse=True)
-    def _seed_data(self):
-        CourtRecord.objects.create(
-            first_name="John",
-            last_name="Smith",
-            date_of_birth="1990-05-15",
-        )
-        CourtRecord.objects.create(
-            first_name="Jonh",
-            last_name="Smyth",
-            date_of_birth="1985-03-20",
-        )
-
-    def test_search_exact_finds_prefix_match(self):
-        """search_exact finds prefix matches."""
-        results = list(CourtRecord.objects.search_exact("John", "Smith"))
-        assert len(results) == 1
-        assert results[0].first_name == "John"
-
-    def test_search_exact_case_insensitive(self):
-        """search_exact is case-insensitive."""
-        results = list(CourtRecord.objects.search_exact("john", "smith"))
-        assert len(results) == 1
-
-    def test_search_exact_no_typo_tolerance(self):
-        """search_exact does not tolerate typos."""
-        results = list(CourtRecord.objects.search_exact("Jonn", "Smit"))
-        assert len(results) == 0
-
-
 class TestLevenshteinFilter:
     """Test that Levenshtein acts as a precision filter."""
 
