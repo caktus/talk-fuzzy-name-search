@@ -52,11 +52,12 @@ INSTALLED_APPS = [
     "django.contrib.postgres",
     # Local apps
     "records",
-    # Debug toolbar
-    "debug_toolbar",
     # Deployment
     "django_simple_deploy",
 ]
+
+if DEBUG:
+    INSTALLED_APPS.append("debug_toolbar")
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
@@ -66,9 +67,14 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    # Debug toolbar (must be after CommonMiddleware)
-    "debug_toolbar.middleware.DebugToolbarMiddleware",
 ]
+
+if DEBUG:
+    # Debug toolbar (must be after CommonMiddleware)
+    MIDDLEWARE.insert(
+        MIDDLEWARE.index("django.middleware.common.CommonMiddleware") + 1,
+        "debug_toolbar.middleware.DebugToolbarMiddleware",
+    )
 
 ROOT_URLCONF = "fuzzy_demo.urls"
 
