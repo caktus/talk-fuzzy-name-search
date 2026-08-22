@@ -2,7 +2,7 @@
 name = "talk-fuzzy-name-search"
 version = "0.1.0"
 description = "Demo: PostgreSQL + Django fuzzy name matching at scale"
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 dependencies = [
     "django~=5.2",
     "psycopg[binary]>=3.2",
@@ -17,6 +17,7 @@ dependencies = [
     # Only used by the marimo slides.py SQL cells (SQLAlchemy defaults to the psycopg2 driver for postgresql:// URLs); the app's DB driver is psycopg3.
     "sqlalchemy>=2.0.52",
     "psycopg2>=2.9.12",
+    "dsd-vps>=0.1.1",
 ]
 
 [dependency-groups]

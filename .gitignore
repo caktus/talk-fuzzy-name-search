@@ -236,3 +236,6 @@ dsd_session.txt
 requirements.txt
 seed_data_prompt.md
 talk_proposal.md
+
+# Large local DB dumps
+fuzzy_demo.tar
