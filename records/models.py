@@ -30,12 +30,26 @@ from .expressions import LevenshteinLessEqual
 # noise a bare KNN top-100 would surface for a rare spelling.
 TRIGRAM_SIMILARITY_CUTOFF = 0.3
 
+# Bitmask values for the _match_source annotation. The trigram bit is set in
+# Python for the KNN top-up rows, not in the SQL CASE expression.
+MATCH_SOURCE_BITS = {
+    "prefix": 1,
+    "legacy": 2,
+    "soundex": 4,
+    "dm": 16,
+    "trigram": 32,
+}
+
 # mode -> (bit, per-name SQL template with {field}, param transform)
 _MATCH_SOURCE_MODES = {
-    "prefix": (1, "UPPER({field}) LIKE %s", lambda v: v.upper() + "%"),
-    "legacy": (2, "{field} ILIKE %s", lambda v: "%" + v + "%"),
-    "soundex": (4, "SOUNDEX(UPPER({field})) = SOUNDEX(%s)", lambda v: v.upper()),
-    "dm": (16, "DAITCH_MOKOTOFF(UPPER({field})) && DAITCH_MOKOTOFF(%s)", lambda v: v.upper()),
+    "prefix": (MATCH_SOURCE_BITS["prefix"], "UPPER({field}) LIKE %s", lambda v: v.upper() + "%"),
+    "legacy": (MATCH_SOURCE_BITS["legacy"], "{field} ILIKE %s", lambda v: "%" + v + "%"),
+    "soundex": (MATCH_SOURCE_BITS["soundex"], "SOUNDEX(UPPER({field})) = SOUNDEX(%s)", lambda v: v.upper()),
+    "dm": (
+        MATCH_SOURCE_BITS["dm"],
+        "DAITCH_MOKOTOFF(UPPER({field})) && DAITCH_MOKOTOFF(%s)",
+        lambda v: v.upper(),
+    ),
 }
 
 
@@ -121,33 +135,54 @@ def build_unified_filter(modes: list[str], first_name: str, last_name: str) -> Q
         if mode_q:
             q |= mode_q
 
-    def _phonetic_or(fn_template: str, ln_template: str):
-        fn_part = fn_template if first_name else None
-        ln_part = ln_template if last_name else None
-        if fn_part and ln_part:
-            return f"({fn_part}) AND ({ln_part})", [fn_upper, ln_upper]
-        if fn_part:
-            return fn_part, [fn_upper]
-        if ln_part:
-            return ln_part, [ln_upper]
-        return None, []
-
     if "soundex" in modes:
-        sql, params = _phonetic_or(
-            "SOUNDEX(UPPER(first_name)) = SOUNDEX(%s)", "SOUNDEX(UPPER(last_name)) = SOUNDEX(%s)"
+        sql, params = _phonetic_group(
+            "SOUNDEX(UPPER(first_name)) = SOUNDEX(%s)",
+            "SOUNDEX(UPPER(last_name)) = SOUNDEX(%s)",
+            first_name,
+            last_name,
+            fn_upper,
+            ln_upper,
         )
         if sql:
             q |= ExpressionWrapper(RawSQL(sql, params), output_field=BooleanField())
 
     if "dm" in modes:
-        sql, params = _phonetic_or(
+        sql, params = _phonetic_group(
             "DAITCH_MOKOTOFF(UPPER(first_name)) && DAITCH_MOKOTOFF(%s)",
             "DAITCH_MOKOTOFF(UPPER(last_name)) && DAITCH_MOKOTOFF(%s)",
+            first_name,
+            last_name,
+            fn_upper,
+            ln_upper,
         )
         if sql:
             q |= ExpressionWrapper(RawSQL(sql, params), output_field=BooleanField())
 
     return q
+
+
+def _phonetic_group(
+    fn_template: str,
+    ln_template: str,
+    first_name: str,
+    last_name: str,
+    fn_upper: str,
+    ln_upper: str,
+) -> tuple[str | None, list]:
+    """Build one AND-ed phonetic SQL group (soundex/dm branch of build_unified_filter).
+
+    Returns (sql, params); sql is None when neither name is provided.
+    """
+    fn_part = fn_template if first_name else None
+    ln_part = ln_template if last_name else None
+    if fn_part and ln_part:
+        return f"({fn_part}) AND ({ln_part})", [fn_upper, ln_upper]
+    if fn_part:
+        return fn_part, [fn_upper]
+    if ln_part:
+        return ln_part, [ln_upper]
+    return None, []
 
 
 def apply_levenshtein_filter(qs: CourtRecordQuerySet, first_name: str, last_name: str) -> CourtRecordQuerySet:
@@ -256,8 +291,8 @@ class CourtRecordQuerySet(models.QuerySet):
             qs = apply_levenshtein_filter(qs, first_name, last_name)
 
         # Annotate match_source bitmask using SQL CASE expressions
-        # prefix=1, legacy=2, soundex=4, dm=16 (trigram=32 is set in Python
-        # for the KNN top-up rows, not in SQL)
+        # (bits in MATCH_SOURCE_BITS; trigram is set in Python for the
+        # KNN top-up rows, not in SQL)
         annotation_parts, annotation_params = _match_source_case(modes, first_name, last_name)
 
         if annotation_parts:
@@ -286,7 +321,7 @@ class CourtRecordQuerySet(models.QuerySet):
             tri_qs = tri_qs.trigram_ordered(first_name, last_name)
             for obj in tri_qs[:100]:
                 if obj.id not in main_ids:
-                    obj._match_source = 32
+                    obj._match_source = MATCH_SOURCE_BITS["trigram"]
                     main_list.append(obj)
                     main_ids.add(obj.id)
                     if len(main_list) >= 100:

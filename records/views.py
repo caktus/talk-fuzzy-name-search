@@ -16,7 +16,13 @@ from django.http import HttpRequest, HttpResponse
 from django.template.response import TemplateResponse
 from django.utils.dateparse import parse_date
 
-from .models import TRIGRAM_SIMILARITY_CUTOFF, CourtRecord, apply_levenshtein_filter, build_unified_filter
+from .models import (
+    MATCH_SOURCE_BITS,
+    TRIGRAM_SIMILARITY_CUTOFF,
+    CourtRecord,
+    apply_levenshtein_filter,
+    build_unified_filter,
+)
 
 # CourtRecord.objects.count() is a full-table COUNT(*) -- on the 54M-row demo
 # table that's a ~600ms sequential-ish scan, and it's on every page load.
@@ -67,15 +73,6 @@ SEARCH_MODES = {
         "description": "Unindexed LIKE '%name%' — slow, included for comparison.",
         "default": False,
     },
-}
-
-# Bitmask values for match_source annotation
-MATCH_BITS = {
-    "prefix": 1,
-    "legacy": 2,
-    "soundex": 4,
-    "dm": 16,
-    "trigram": 32,
 }
 
 DEFAULT_MODES = [k for k, v in SEARCH_MODES.items() if v["default"]]
@@ -179,11 +176,11 @@ def _run_unified_search(modes: list[str], first_name: str, last_name: str, date_
             {
                 "person": record,
                 "match_source": source,
-                "has_prefix": bool(source & MATCH_BITS["prefix"]),
-                "has_legacy": bool(source & MATCH_BITS["legacy"]),
-                "has_soundex": bool(source & MATCH_BITS["soundex"]),
-                "has_dm": bool(source & MATCH_BITS["dm"]),
-                "has_trigram": bool(source & MATCH_BITS["trigram"]),
+                "has_prefix": bool(source & MATCH_SOURCE_BITS["prefix"]),
+                "has_legacy": bool(source & MATCH_SOURCE_BITS["legacy"]),
+                "has_soundex": bool(source & MATCH_SOURCE_BITS["soundex"]),
+                "has_dm": bool(source & MATCH_SOURCE_BITS["dm"]),
+                "has_trigram": bool(source & MATCH_SOURCE_BITS["trigram"]),
             }
         )
 

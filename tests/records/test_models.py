@@ -7,12 +7,11 @@ from datetime import date
 
 import pytest
 
-from records.models import CourtRecord
+from records.models import CourtRecord, _phonetic_group
 from tests.records.factories import CourtRecordFactory
 
-pytestmark = pytest.mark.django_db
 
-
+@pytest.mark.django_db
 class TestCourtRecordModel:
     """Characterize CourtRecord model creation and behavior."""
 
@@ -60,6 +59,7 @@ class TestCourtRecordModel:
         assert "Smith" in str(person)
 
 
+@pytest.mark.django_db
 class TestLevenshteinOnlySemantics:
     """B1/B13: Levenshtein is a precision filter on top of base modes, not a standalone search."""
 
@@ -97,6 +97,7 @@ class TestLevenshteinOnlySemantics:
         assert len(CourtRecord.objects.search_unified(["legacy"], "J", "Smith", self.dob)) == 1
 
 
+@pytest.mark.django_db
 class TestDobOnlySearchCap:
     """B7: a DOB-only search is capped at 100 rows and returns a materialized list."""
 
@@ -128,6 +129,7 @@ class TestDobOnlySearchCap:
         assert len(results) == 1
 
 
+@pytest.mark.django_db
 class TestTrigramVisibility:
     """B6: trigram rows must stay visible when base modes would fill the whole page."""
 
@@ -212,6 +214,7 @@ class TestTrigramVisibility:
         }
 
 
+@pytest.mark.django_db
 class TestSearchUnifiedSortField:
     """The page sort is a SQL ORDER BY on the base query (sort_field)."""
 
@@ -246,6 +249,7 @@ class TestSearchUnifiedSortField:
         assert [p.last_name for p in results] == ["A", "B", "C"]
 
 
+@pytest.mark.django_db
 class TestSearchUnifiedCap:
     """B16: search_unified() is annotated -> list[CourtRecord] and documented as limited to 100;
     no code path may return more than 100 rows."""
@@ -283,6 +287,7 @@ class TestSearchUnifiedCap:
         assert all(isinstance(p, CourtRecord) for p in results)
 
 
+@pytest.mark.django_db
 class TestUnifiedSearchNicknameLimitation:
     """P1-12: unified search does not expand nicknames — pins the current behavior.
 
@@ -332,6 +337,7 @@ class TestUnifiedSearchNicknameLimitation:
         assert [(p.first_name, p.last_name) for p in results] == [("Bill", "Smith")]
 
 
+@pytest.mark.django_db
 class TestSoundexHeroCase:
     """P1-11 hero case: the unified soundex mode finds "John Smith" for "John Smyth".
 
@@ -349,3 +355,45 @@ class TestSoundexHeroCase:
         """The unified search's OR-ed soundex group finds him as well."""
         results = CourtRecord.objects.search_unified(["soundex"], "John", "Smyth")
         assert [(p.first_name, p.last_name) for p in results] == [("John", "Smith")]
+
+
+class TestPhoneticGroup:
+    """Pure SQL-group builder for the soundex/dm branches of build_unified_filter (no DB)."""
+
+    TEMPLATES = {
+        "soundex": (
+            "SOUNDEX(UPPER(first_name)) = SOUNDEX(%s)",
+            "SOUNDEX(UPPER(last_name)) = SOUNDEX(%s)",
+        ),
+        "dm": (
+            "DAITCH_MOKOTOFF(UPPER(first_name)) && DAITCH_MOKOTOFF(%s)",
+            "DAITCH_MOKOTOFF(UPPER(last_name)) && DAITCH_MOKOTOFF(%s)",
+        ),
+    }
+
+    @pytest.mark.parametrize("mode", ["soundex", "dm"])
+    def test_both_names(self, mode):
+        fn_tpl, ln_tpl = self.TEMPLATES[mode]
+        sql, params = _phonetic_group(fn_tpl, ln_tpl, "John", "Smith", "JOHN", "SMITH")
+        assert sql == f"({fn_tpl}) AND ({ln_tpl})"
+        assert params == ["JOHN", "SMITH"]
+
+    @pytest.mark.parametrize("mode", ["soundex", "dm"])
+    def test_first_name_only(self, mode):
+        fn_tpl, _ = self.TEMPLATES[mode]
+        sql, params = _phonetic_group(*self.TEMPLATES[mode], "John", "", "JOHN", "")
+        assert sql == fn_tpl
+        assert params == ["JOHN"]
+
+    @pytest.mark.parametrize("mode", ["soundex", "dm"])
+    def test_last_name_only(self, mode):
+        _, ln_tpl = self.TEMPLATES[mode]
+        sql, params = _phonetic_group(*self.TEMPLATES[mode], "", "Smith", "", "SMITH")
+        assert sql == ln_tpl
+        assert params == ["SMITH"]
+
+    @pytest.mark.parametrize("mode", ["soundex", "dm"])
+    def test_no_names(self, mode):
+        sql, params = _phonetic_group(*self.TEMPLATES[mode], "", "", "", "")
+        assert sql is None
+        assert params == []

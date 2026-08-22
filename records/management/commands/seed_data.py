@@ -223,7 +223,7 @@ class Command(BaseCommand):
             firsts = self._sample_names(first_names, first_cdf, batch_identities, rng)
             lasts = self._sample_names(last_names, last_cdf, batch_identities, rng)
             sampled = pl.DataFrame({"first_name": firsts, "last_name": lasts})
-            identities = self._assign_attributes(sampled, batch_identities, rng, fake, as_of)
+            identities = self._assign_attributes(sampled, rng, fake, as_of)
             batch_rows = self._expand_clusters(identities, rng)
             self.stdout.write(f"    generate: {time.perf_counter() - t0:.1f}s ({len(batch_rows):,} rows)")
 
@@ -314,9 +314,7 @@ class Command(BaseCommand):
         u = rng.random(sample_size)
         return names[np.searchsorted(cdf, u)]
 
-    def _assign_attributes(
-        self, df: pl.DataFrame, count: int, rng: np.random.Generator, fake: Faker, as_of: date
-    ) -> pl.DataFrame:
+    def _assign_attributes(self, df: pl.DataFrame, rng: np.random.Generator, fake: Faker, as_of: date) -> pl.DataFrame:
         """Assign DOB, person_id, cluster_size, middle_name, nicknames per identity.
 
         DOBs are drawn relative to as_of (the --as-of reference date), so the
