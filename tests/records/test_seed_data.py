@@ -626,35 +626,68 @@ class TestDebugWarning:
         assert "DEBUG = True" not in cmd.stdout.getvalue()
 
 
+def _write_synthetic_name_csv(directory: Path, stem: str, name_column: str) -> Path:
+    """Write a deterministic synthetic name-frequency CSV (the Census/SSA
+    format: <name_column>,gender,count) so full-pipeline tests never depend
+    on the gitignored downloaded data files."""
+    path = directory / f"{stem}.csv"
+    rows = [f"{name_column},gender,count"]
+    for i in range(400):
+        rows.append(f"NAME{i % 300},{'M' if i % 2 else 'F'},{1000 - (i % 97)}")
+    path.write_text("\n".join(rows) + "\n")
+    return path
+
+
+@pytest.fixture(scope="module")
+def synthetic_name_csvs(tmp_path_factory) -> tuple[Path, Path]:
+    """Small synthetic first/last name-frequency CSVs standing in for the
+    (gitignored) downloaded Census/SSA data, so the full _seed() pipeline can
+    run in CI without the data files."""
+    directory = tmp_path_factory.mktemp("synthetic_names")
+    return (
+        _write_synthetic_name_csv(directory, "us_forenames", "forename"),
+        _write_synthetic_name_csv(directory, "us_surnames", "surname"),
+    )
+
+
 class TestReproducibility:
     """(seed, count, as-of) must fully determine the generated rows.
 
     Runs _seed() in-memory with a stubbed _bulk_insert that captures the
-    DataFrames, so no database is involved.
+    DataFrames, so no database is involved. Name data comes from small
+    synthetic CSVs (the synthetic_name_csvs fixture), not the downloaded
+    data files.
     """
 
     @staticmethod
-    def _run_seed(count: int, seed: int, as_of: date) -> pl.DataFrame:
+    def _run_seed(
+        count: int, seed: int, as_of: date, synthetic_name_csvs: tuple[Path, Path], monkeypatch
+    ) -> pl.DataFrame:
+        # Point the module-level data constants at the synthetic CSVs for the
+        # duration of this test (auto-reverted by monkeypatch on teardown).
+        forenames, surnames = synthetic_name_csvs
+        monkeypatch.setattr(seed_data, "FORENAMES_CSV", forenames)
+        monkeypatch.setattr(seed_data, "SURNAMES_CSV", surnames)
         cmd = Command()
         captured: list[pl.DataFrame] = []
         cmd._bulk_insert = lambda df: captured.append(df)
         cmd._seed(count, seed, as_of)
         return pl.concat(captured)
 
-    def test_same_seed_count_asof_reproduces_rows(self):
+    def test_same_seed_count_asof_reproduces_rows(self, synthetic_name_csvs, monkeypatch):
         """Two runs with the same (seed, count, as-of) produce identical rows."""
-        a = self._run_seed(300, 42, AS_OF)
-        b = self._run_seed(300, 42, AS_OF)
+        a = self._run_seed(300, 42, AS_OF, synthetic_name_csvs, monkeypatch)
+        b = self._run_seed(300, 42, AS_OF, synthetic_name_csvs, monkeypatch)
 
         # person_id is an Object (UUID) column; compare it by value, the rest by frame equality
         assert a.drop("person_id").equals(b.drop("person_id"))
         assert a["person_id"].to_list() == b["person_id"].to_list()
 
-    def test_person_ids_deterministic_and_seed_dependent(self):
+    def test_person_ids_deterministic_and_seed_dependent(self, synthetic_name_csvs, monkeypatch):
         """Same seed → identical person_id set; different seed → different set."""
-        a = self._run_seed(300, 42, AS_OF)
-        b = self._run_seed(300, 42, AS_OF)
-        c = self._run_seed(300, 7, AS_OF)
+        a = self._run_seed(300, 42, AS_OF, synthetic_name_csvs, monkeypatch)
+        b = self._run_seed(300, 42, AS_OF, synthetic_name_csvs, monkeypatch)
+        c = self._run_seed(300, 7, AS_OF, synthetic_name_csvs, monkeypatch)
 
         pids_a = set(a["person_id"].to_list())
         pids_b = set(b["person_id"].to_list())
@@ -663,11 +696,11 @@ class TestReproducibility:
         assert pids_a == pids_b
         assert pids_a != pids_c
 
-    def test_as_of_derives_dobs(self):
+    def test_as_of_derives_dobs(self, synthetic_name_csvs, monkeypatch):
         """DOBs derive from the --as-of date: all DOBs <= as-of, and the same
         seed with a shifted as-of shifts every DOB by exactly the delta."""
-        a = self._run_seed(200, 42, date(2026, 1, 1))
-        b = self._run_seed(200, 42, date(2025, 1, 1))
+        a = self._run_seed(200, 42, date(2026, 1, 1), synthetic_name_csvs, monkeypatch)
+        b = self._run_seed(200, 42, date(2025, 1, 1), synthetic_name_csvs, monkeypatch)
 
         dobs_a = a["date_of_birth"].to_list()
         dobs_b = b["date_of_birth"].to_list()

@@ -74,6 +74,8 @@ jobs:
       # pytest-django creates its own test database (test_fuzzy_demo) from
       # scratch, proving the full 0001-0007 migration chain including
       # CREATE EXTENSION fuzzystrmatch/pg_trgm, then runs the whole suite.
+      # The suite needs NO external data: the full-pipeline seed_data tests
+      # substitute small synthetic name-frequency CSVs.
       - name: Run test suite
         run: uv run pytest tests/ -q
 
@@ -81,7 +83,7 @@ jobs:
       # gitignored local artifacts, so regenerate them from the Kaggle source
       # dataset the same way the README tells local devs (kagglehub is in the
       # dev group, already synced). Run from name_dataset/ so the CSVs land
-      # where seed_data expects them.
+      # where seed_data expects them. Only the seed smoke below needs them.
       - name: Generate name-frequency data
         run: |
           cd name_dataset
