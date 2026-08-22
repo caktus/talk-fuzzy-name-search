@@ -62,23 +62,65 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/fuzzy_demo
 DEBUG=True
 DJANGO_SECRET_KEY=django-insecure-demo-key-change-in-production
 EOF
+```
+
+### Seeding with real name data
+
+`seed_data` weights first/last names with real US Census/SSA frequency counts
+from `name_dataset/us_forenames.csv` and `name_dataset/us_surnames.csv`. Those
+files are gitignored local artifacts (not committed), so download them once
+first — run the marimo script from the `name_dataset/` directory so the CSVs
+land where `seed_data` expects them:
+
+```bash
+cd name_dataset
+uv run python download_name_data.py   # one-time; requires kagglehub (already a dependency)
+cd ..
 
 # Migrate + seed a fast local dataset (under a minute)
 uv run python manage.py migrate
+
+# Reverse migrations to save time while creating data
+uv run python manage.py migrate records 0002
+
+# Create fake data
 uv run python manage.py seed_data --count 100000 --flush --seed 42 --as-of 2026-01-01
+
 # Full 54M stage dataset. Rreference runs:
 # ~100 min on a 40 GB Linux VM w/ PCIe 5.0 X4 NVME
 # ~4 hours on a 36 GB MacBook Pro M3 Max (2023)
-# uv run python manage.py seed_data --count 54000000 --flush --seed 42 --as-of 2026-01-01
+
+# Run large seeds with DEBUG disabled to minimize RAM usage / query logging overhead.
+
+# DEBUG=False time uv run python manage.py seed_data --count 54000000 --flush --seed 42 --as-of 2026-01-01
+
+# Re-run the subsequent migrations to add indexes
+time uv run python manage.py migrate records 0003
+time uv run python manage.py migrate records 0004
 
 # Run
-uv run python manage.py runserver    # Web demo (localhost:8000)
-uv run marimo edit demo.py           # Interactive notebook
-uv run pytest tests/                 # Test suite
+uv run python manage.py runserver # Web demo (localhost:8000)
+uv run pytest tests/ # Test suite
 ```
 
 The pre-rewrite CSV pipeline lives in `scripts/legacy/` for reference; it is
 not part of this flow (see `scripts/legacy/README.md`).
+
+## Sharing the demo data
+
+On the machine that generated the data:
+
+```bash
+pg_dump -Ox -Fc fuzzy_demo > fuzzy_demo.tar
+```
+
+On the machine restoring the data:
+
+```bash
+dropdb fuzzy_demo
+createdb fuzzy_demo
+pg_restore -d fuzzy_demo fuzzy_demo.tar
+```
 
 ## Slides
 
@@ -97,10 +139,9 @@ uv run marimo edit --watch --host 0.0.0.0 slides.py
 ## What's Inside
 
 - **`records/`** -- Django app with `CourtRecord` model, the `search_unified()` search API, and web views
-- **`demo.py`** -- Marimo notebook for the 45-minute conference presentation (drives the same `search_unified()` API as the web UI)
+- **`slides.py`** -- Marimo slide deck for the conference presentation (drives the same `CourtRecord` model as the web UI)
 - **`scripts/legacy/`** -- Pre-rewrite CSV data pipeline (superseded by `manage.py seed_data`)
-- **`54M_status.md`** -- Verification results and EXPLAIN plans for the 54M stage dataset
-- **`tests/`** -- Test suite (179 passing)
+- **`tests/`** -- Test suite
 
 ## Architecture
 
@@ -108,7 +149,7 @@ All search runs through one API, `CourtRecord.objects.search_unified(modes, firs
 
 ## Performance at 54M Scale
 
-EXPLAIN (ANALYZE)-verified on the live 54M stage DB (full plans in `54M_status.md`):
+EXPLAIN (ANALYZE)-verified on the live 54M stage DB:
 
 | Query                                                                                | Rows | Time    |
 | ------------------------------------------------------------------------------------ | ---- | ------- |

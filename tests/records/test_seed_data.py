@@ -1,18 +1,21 @@
 """Tests for seed_data management command generation logic.
 
-Tests the vectorized name generation, Zipf sampling, cluster expansion,
-typo injection within clusters, person_id consistency, batched bulk-insert,
-and (seed, count, as-of) reproducibility.
+Tests the vectorized name generation, Census/SSA-weighted independent name
+sampling, cluster expansion, typo injection within clusters, person_id
+consistency, batched bulk-insert, and (seed, count, as-of) reproducibility.
 """
 
 from datetime import date
+from pathlib import Path
 from uuid import UUID, uuid4
 
 import numpy as np
 import polars as pl
 import pytest
+from django.core.management.base import CommandError
 from django.db import connection
 
+from records.management.commands import seed_data
 from records.management.commands.seed_data import Command
 from records.models import CourtRecord
 
@@ -20,6 +23,25 @@ pytestmark = pytest.mark.django_db
 
 # Fixed reference date so tests never depend on the wall clock.
 AS_OF = date(2026, 1, 1)
+
+
+@pytest.fixture()
+def name_csv(tmp_path) -> Path:
+    """A small synthetic name-frequency CSV in the Census/SSA format
+    (forename,gender,count): two gender rows for one name, a lowercase name,
+    a null name, and a name longer than the model's max_length=50."""
+    path = tmp_path / "names.csv"
+    path.write_text(f"forename,gender,count\nalice,M,1000\nalice,F,500\nBob,M,100\nCarol,F,50\n,M,7\n{'X' * 51},M,3\n")
+    return path
+
+
+def _sampled_frame(n: int, rng: np.random.Generator, csv_path: Path) -> pl.DataFrame:
+    """Names sampled independently from a small synthetic CSV fixture —
+    the same call sequence _seed uses per batch."""
+    names, cdf = Command._load_name_weights(csv_path, "forename")
+    firsts = Command._sample_names(names, cdf, n, rng)
+    lasts = Command._sample_names(names, cdf, n, rng)
+    return pl.DataFrame({"first_name": firsts, "last_name": lasts})
 
 
 class ScriptedRng:
@@ -45,120 +67,127 @@ class ScriptedRng:
         return value
 
 
-class TestNamePoolGeneration:
-    """Test _build_name_pool generates distinct name combinations."""
+class TestLoadNameWeights:
+    """Test _load_name_weights normalizes a Census/SSA frequency CSV into
+    (names, cdf) for weighted sampling."""
 
-    def test_pool_size(self):
-        """Pool size matches requested size."""
-        cmd = Command()
-        fake = pytest.importorskip("faker").Faker("en_US")
-        rng = np.random.default_rng(42)
-        pool = cmd._build_name_pool(500, fake, rng)
+    def test_genders_are_aggregated(self, name_csv):
+        """Gender rows for the same name are summed into one weight."""
+        names, cdf = Command._load_name_weights(name_csv, "forename")
 
-        assert len(pool) == 500
-        assert "first_name" in pool.columns
-        assert "last_name" in pool.columns
+        # ALICE = 1000 (M) + 500 (F); the null and 51-char names are dropped
+        assert set(names) == {"ALICE", "BOB", "CAROL"}
+        assert cdf[0] == pytest.approx(1500 / 1650)
+        assert cdf[1] == pytest.approx(1600 / 1650)
+        assert cdf[-1] == 1.0
 
-    def test_pool_pairs_are_distinct(self):
-        """Every pair in the pool is unique (deduped pool)."""
-        cmd = Command()
-        fake = pytest.importorskip("faker").Faker("en_US")
-        rng = np.random.default_rng(42)
-        pool = cmd._build_name_pool(500, fake, rng)
+    def test_names_are_uppercased(self, name_csv):
+        """Lowercase dataset entries are uppercased."""
+        names, _ = Command._load_name_weights(name_csv, "forename")
+        assert all(name == name.upper() for name in names)
 
-        assert len(pool.unique()) == len(pool)
+    def test_sorted_by_count_descending(self, name_csv):
+        """Names are ordered by count descending (ties by name) so the
+        vocabulary ordering — and the sampled output for a given seed — is
+        stable for a given data file."""
+        names, _ = Command._load_name_weights(name_csv, "forename")
+        assert names.tolist() == ["ALICE", "BOB", "CAROL"]
 
-    def test_names_are_uppercase(self):
-        """All names in the pool are uppercase."""
-        cmd = Command()
-        fake = pytest.importorskip("faker").Faker("en_US")
-        rng = np.random.default_rng(42)
-        pool = cmd._build_name_pool(200, fake, rng)
+    def test_cdf_is_monotone_and_normalized(self, name_csv):
+        """cdf is non-decreasing and ends at exactly 1.0."""
+        _, cdf = Command._load_name_weights(name_csv, "forename")
+        assert np.all(np.diff(cdf) >= 0)
+        assert cdf[-1] == 1.0
 
-        for name in pool["first_name"].to_list():
-            assert name == name.upper()
-        for name in pool["last_name"].to_list():
-            assert name == name.upper()
+    def test_null_and_long_names_dropped(self, name_csv):
+        """Null names and names longer than CharField(max_length=50) are dropped."""
+        names, _ = Command._load_name_weights(name_csv, "forename")
+        assert all(0 < len(name) <= 50 for name in names)
 
-    def test_no_empty_names(self):
-        """No empty names in the pool."""
-        cmd = Command()
-        fake = pytest.importorskip("faker").Faker("en_US")
-        rng = np.random.default_rng(42)
-        pool = cmd._build_name_pool(500, fake, rng)
+    def test_missing_file_raises_command_error(self, tmp_path):
+        """A missing data file raises a CommandError pointing at the download script."""
+        with pytest.raises(CommandError, match="download_name_data"):
+            Command._load_name_weights(tmp_path / "nope.csv", "forename")
 
-        assert all(len(name) > 0 for name in pool["first_name"].to_list())
-        assert all(len(name) > 0 for name in pool["last_name"].to_list())
+    @pytest.mark.skipif(
+        not (seed_data.FORENAMES_CSV.exists() and seed_data.SURNAMES_CSV.exists()),
+        reason="local name data not downloaded; run name_dataset/download_name_data.py",
+    )
+    def test_local_dataset_files_load(self):
+        """The locally downloaded (gitignored) CSVs load via pl.read_csv and
+        are valid weight tables. Skipped when the data has not been downloaded."""
+        for path, column in [
+            (seed_data.FORENAMES_CSV, "forename"),
+            (seed_data.SURNAMES_CSV, "surname"),
+        ]:
+            names, cdf = Command._load_name_weights(path, column)
+            assert len(names) >= 100_000
+            assert len(np.unique(names)) == len(names)
+            assert cdf[-1] == 1.0
+            assert all(0 < len(n) <= 50 for n in names[:1000])
 
-    def test_pool_capped_at_name_space(self):
-        """Pool cannot exceed the en_US cartesian space and stays distinct."""
-        cmd = Command()
-        fake = pytest.importorskip("faker").Faker("en_US")
-        rng = np.random.default_rng(42)
-        pool = cmd._build_name_pool(2_000_000, fake, rng)
 
-        assert len(pool) <= 690_000
-        assert len(pool.unique()) == len(pool)
+class TestIndependentNameSampling:
+    """Test _sample_names draws each name with probability proportional to
+    its Census/SSA count."""
 
+    @pytest.fixture()
+    def vocab(self, tmp_path):
+        path = tmp_path / "vocab.csv"
+        path.write_text("forename,gender,count\nAlpha,M,9000\nBeta,M,1000\n")
+        return Command._load_name_weights(path, "forename")
 
-class TestZipfSampling:
-    """Test _zipf_sample produces a heavy-tailed name frequency distribution."""
-
-    def test_sample_size(self):
+    def test_sample_size(self, vocab):
         """Sample size matches requested size."""
-        cmd = Command()
-        pool = pl.DataFrame(
-            {
-                "first_name": [f"FIRST{i}" for i in range(100)],
-                "last_name": [f"LAST{i}" for i in range(100)],
-            }
-        )
+        names, cdf = vocab
         rng = np.random.default_rng(42)
-        sampled = cmd._zipf_sample(pool, 500, rng)
+        assert len(Command._sample_names(names, cdf, 500, rng)) == 500
 
-        assert len(sampled) == 500
-
-    def test_heavy_tailed_distribution(self):
-        """Zipf sampling produces a heavy tail: top pair far more frequent than the median pair."""
-        cmd = Command()
-        pool = pl.DataFrame(
-            {
-                "first_name": [f"FIRST{i}" for i in range(100)],
-                "last_name": [f"LAST{i}" for i in range(100)],
-            }
-        )
+    def test_samples_only_from_vocabulary(self, vocab):
+        """Every sampled name exists in the source vocabulary."""
+        names, cdf = vocab
         rng = np.random.default_rng(42)
-        sampled = cmd._zipf_sample(pool, 10_000, rng)
+        sampled = Command._sample_names(names, cdf, 5000, rng)
+        assert set(sampled) <= set(names)
 
-        # Frequency of every pool pair (including pairs that drew zero samples)
-        pos = {pair: i for i, pair in enumerate(zip(pool["first_name"], pool["last_name"]))}
-        freq = np.zeros(len(pool), dtype=int)
-        for fn, ln, c in sampled.group_by(["first_name", "last_name"]).agg(pl.len().alias("c")).iter_rows():
-            freq[pos[(fn, ln)]] = c
+    def test_weighting_follows_counts(self, vocab):
+        """A name with 9x the count of another is drawn ~9x more often.
 
-        top = freq.max()
-        median = np.median(freq)
-        tenth = np.sort(freq)[::-1][9]
-
-        # Measured across 30 seeds: top/median is >= 12x, top/10th is >= 8x — 5x/2x are robust margins.
-        assert top >= 5 * median
-        assert top >= 2 * tenth
-
-    def test_sampled_names_from_pool(self):
-        """All sampled names exist in the original pool."""
-        cmd = Command()
-        pool = pl.DataFrame(
-            {
-                "first_name": [f"FIRST{i}" for i in range(100)],
-                "last_name": [f"LAST{i}" for i in range(100)],
-            }
-        )
+        P(ALPHA) = 0.9, P(BETA) = 0.1: over 40k draws E[ALPHA] = 36000
+        (sigma ~ 60), E[BETA] = 4000 (sigma ~ 60) — the margins below are
+        ~50 sigma wide, so this only fails if the weighting is broken.
+        """
+        names, cdf = vocab
         rng = np.random.default_rng(42)
-        sampled = cmd._zipf_sample(pool, 500, rng)
+        sampled = Command._sample_names(names, cdf, 40_000, rng)
+        freq = {name: int((sampled == name).sum()) for name in names}
 
-        pool_set = set(zip(pool["first_name"].to_list(), pool["last_name"].to_list()))
-        for fn, ln in zip(sampled["first_name"].to_list(), sampled["last_name"].to_list()):
-            assert (fn, ln) in pool_set
+        assert freq["ALPHA"] > 9 * freq["BETA"]
+        assert 33_000 <= freq["ALPHA"] <= 39_000
+        assert 3_400 <= freq["BETA"] <= 4_600
+
+    def test_first_and_last_draws_are_independent(self, vocab):
+        """The (first, last) joint frequency matches the product of the
+        marginals — the two draws do not share a rank, so no pair
+        concentrates at a Zipf top rank."""
+        names, cdf = vocab
+        rng = np.random.default_rng(42)
+        firsts = Command._sample_names(names, cdf, 40_000, rng)
+        lasts = Command._sample_names(names, cdf, 40_000, rng)
+
+        observed = int(((firsts == "ALPHA") & (lasts == "BETA")).sum())
+        expected = 40_000 * 0.9 * 0.1
+        sigma = np.sqrt(40_000 * 0.09 * 0.91)
+        assert abs(observed - expected) < 5 * sigma
+
+    def test_reproducible_with_fixed_seed(self, vocab):
+        """The same seed reproduces the same draw sequence; another seed does not."""
+        names, cdf = vocab
+        a = Command._sample_names(names, cdf, 10_000, np.random.default_rng(42))
+        b = Command._sample_names(names, cdf, 10_000, np.random.default_rng(42))
+        c = Command._sample_names(names, cdf, 10_000, np.random.default_rng(7))
+        assert (a == b).all()
+        assert not (a == c).all()
 
 
 class TestTypoInjection:
@@ -274,30 +303,28 @@ class TestTypoInjectionBranches:
 class TestClusterExpansion:
     """Test _expand_clusters produces correct cluster structures."""
 
-    def test_expansion_respects_cluster_sizes(self):
+    def test_expansion_respects_cluster_sizes(self, name_csv):
         """Expanded rows count matches sum of cluster sizes."""
         cmd = Command()
         fake = pytest.importorskip("faker").Faker("en_US")
         fake.seed_instance(42)
         rng = np.random.default_rng(42)
 
-        pool = cmd._build_name_pool(50, fake, rng)
-        sampled = cmd._zipf_sample(pool, 100, rng)
+        sampled = _sampled_frame(100, rng, name_csv)
         identities = cmd._assign_attributes(sampled, 100, rng, fake, AS_OF)
         expanded = cmd._expand_clusters(identities, rng)
 
         expected_total = int(identities["cluster_size"].sum())
         assert len(expanded) == expected_total
 
-    def test_cluster_records_share_person_id_and_dob(self):
+    def test_cluster_records_share_person_id_and_dob(self, name_csv):
         """All records from the same identity share person_id and DOB."""
         cmd = Command()
         fake = pytest.importorskip("faker").Faker("en_US")
         fake.seed_instance(42)
         rng = np.random.default_rng(42)
 
-        pool = cmd._build_name_pool(50, fake, rng)
-        sampled = cmd._zipf_sample(pool, 100, rng)
+        sampled = _sampled_frame(100, rng, name_csv)
         identities = cmd._assign_attributes(sampled, 100, rng, fake, AS_OF)
         expanded = cmd._expand_clusters(identities, rng)
 
@@ -309,15 +336,14 @@ class TestClusterExpansion:
         for pid_str, dobs in pid_groups.items():
             assert len(dobs) == 1, f"Cluster {pid_str} has multiple DOBs: {dobs}"
 
-    def test_expanded_records_have_person_id(self):
+    def test_expanded_records_have_person_id(self, name_csv):
         """All expanded records have a valid person_id."""
         cmd = Command()
         fake = pytest.importorskip("faker").Faker("en_US")
         fake.seed_instance(42)
         rng = np.random.default_rng(42)
 
-        pool = cmd._build_name_pool(50, fake, rng)
-        sampled = cmd._zipf_sample(pool, 100, rng)
+        sampled = _sampled_frame(100, rng, name_csv)
         identities = cmd._assign_attributes(sampled, 100, rng, fake, AS_OF)
         expanded = cmd._expand_clusters(identities, rng)
 
@@ -328,15 +354,14 @@ class TestClusterExpansion:
 class TestBulkInsert:
     """Test _bulk_insert creates records correctly."""
 
-    def test_bulk_insert_creates_records(self):
+    def test_bulk_insert_creates_records(self, name_csv):
         """Bulk insert creates the expected number of records."""
         cmd = Command()
         fake = pytest.importorskip("faker").Faker("en_US")
         fake.seed_instance(42)
         rng = np.random.default_rng(42)
 
-        pool = cmd._build_name_pool(50, fake, rng)
-        sampled = cmd._zipf_sample(pool, 200, rng)
+        sampled = _sampled_frame(200, rng, name_csv)
         identities = cmd._assign_attributes(sampled, 200, rng, fake, AS_OF)
         expanded = cmd._expand_clusters(identities, rng)
 
@@ -344,15 +369,65 @@ class TestBulkInsert:
         cmd._bulk_insert(expanded)
         assert CourtRecord.objects.count() == len(expanded)
 
-    def test_bulk_insert_dob_not_null(self):
+    def test_bulk_insert_does_not_retain_query_log(self, name_csv):
+        """Debug query logging must be suppressed during bulk inserts (memory regression).
+
+        Under DEBUG=True Django logs each 100k-row INSERT as a multi-MB SQL
+        string in connection.queries_log; _bulk_insert must swap in a bounded
+        deque for the duration of the inserts and restore the original (cleared)
+        deque afterwards. This leak OOM-killed a 54M seed run.
+        """
+        cmd = Command()
+        fake = pytest.importorskip("faker").Faker("en_US")
+        fake.seed_instance(42)
+        rng = np.random.default_rng(42)
+
+        sampled = _sampled_frame(200, rng, name_csv)
+        identities = cmd._assign_attributes(sampled, 200, rng, fake, AS_OF)
+        expanded = cmd._expand_clusters(identities, rng)
+
+        original_log = connection.queries_log
+        # Force debug query logging on (tests run with DEBUG=False) and ensure
+        # the log is being populated.
+        connection.force_debug_cursor = True
+        try:
+            CourtRecord.objects.count()
+            assert len(original_log) >= 1
+
+            # Capture what the log is while an insert runs.
+            seen = {}
+            from django.db.models.query import QuerySet
+
+            real_bulk_create = QuerySet.bulk_create
+
+            def spy(self, objs, **kwargs):
+                seen["log"] = connection.queries_log
+                return real_bulk_create(self, objs, **kwargs)
+
+            QuerySet.bulk_create = spy
+            try:
+                cmd._bulk_insert(expanded)
+            finally:
+                QuerySet.bulk_create = real_bulk_create
+        finally:
+            connection.force_debug_cursor = False
+
+        assert CourtRecord.objects.count() == len(expanded)
+        # During inserts the log was a minimal deque, not the original.
+        assert seen["log"] is not original_log
+        assert seen["log"].maxlen == 1
+        # Afterwards the original deque is restored and cleared.
+        assert connection.queries_log is original_log
+        assert len(original_log) == 0
+
+    def test_bulk_insert_dob_not_null(self, name_csv):
         """All inserted records have a non-NULL date_of_birth."""
         cmd = Command()
         fake = pytest.importorskip("faker").Faker("en_US")
         fake.seed_instance(42)
         rng = np.random.default_rng(42)
 
-        pool = cmd._build_name_pool(50, fake, rng)
-        sampled = cmd._zipf_sample(pool, 200, rng)
+        sampled = _sampled_frame(200, rng, name_csv)
         identities = cmd._assign_attributes(sampled, 200, rng, fake, AS_OF)
         expanded = cmd._expand_clusters(identities, rng)
 
@@ -360,15 +435,14 @@ class TestBulkInsert:
         null_count = CourtRecord.objects.filter(date_of_birth__isnull=True).count()
         assert null_count == 0
 
-    def test_bulk_insert_person_id_not_null(self):
+    def test_bulk_insert_person_id_not_null(self, name_csv):
         """All inserted records have a non-NULL person_id."""
         cmd = Command()
         fake = pytest.importorskip("faker").Faker("en_US")
         fake.seed_instance(42)
         rng = np.random.default_rng(42)
 
-        pool = cmd._build_name_pool(50, fake, rng)
-        sampled = cmd._zipf_sample(pool, 200, rng)
+        sampled = _sampled_frame(200, rng, name_csv)
         identities = cmd._assign_attributes(sampled, 200, rng, fake, AS_OF)
         expanded = cmd._expand_clusters(identities, rng)
 
@@ -376,15 +450,14 @@ class TestBulkInsert:
         null_count = CourtRecord.objects.filter(person_id__isnull=True).count()
         assert null_count == 0
 
-    def test_bulk_insert_nickname_records(self):
+    def test_bulk_insert_nickname_records(self, name_csv):
         """Some records have nicknames populated."""
         cmd = Command()
         fake = pytest.importorskip("faker").Faker("en_US")
         fake.seed_instance(42)
         rng = np.random.default_rng(42)
 
-        pool = cmd._build_name_pool(500, fake, rng)
-        sampled = cmd._zipf_sample(pool, 1000, rng)
+        sampled = _sampled_frame(1000, rng, name_csv)
         identities = cmd._assign_attributes(sampled, 1000, rng, fake, AS_OF)
         expanded = cmd._expand_clusters(identities, rng)
 
@@ -392,15 +465,14 @@ class TestBulkInsert:
         with_nicknames = CourtRecord.objects.filter(nicknames__len__gt=0).count()
         assert with_nicknames > 0
 
-    def test_bulk_insert_middle_name_records(self):
+    def test_bulk_insert_middle_name_records(self, name_csv):
         """Most records have middle names (90% rate)."""
         cmd = Command()
         fake = pytest.importorskip("faker").Faker("en_US")
         fake.seed_instance(42)
         rng = np.random.default_rng(42)
 
-        pool = cmd._build_name_pool(500, fake, rng)
-        sampled = cmd._zipf_sample(pool, 1000, rng)
+        sampled = _sampled_frame(1000, rng, name_csv)
         identities = cmd._assign_attributes(sampled, 1000, rng, fake, AS_OF)
         expanded = cmd._expand_clusters(identities, rng)
 
@@ -505,10 +577,10 @@ class TestFlush:
 
         assert CourtRecord.objects.count() == 0
         with connection.cursor() as cursor:
-            # The id sequence keeps its pre-rename name (Django's RenameModel
-            # renames the table, not the owned sequence), so it is still
-            # records_person_id_seq even though the table is records_courtrecord.
-            cursor.execute("SELECT last_value FROM records_person_id_seq")
+            # The migrations were recreated from scratch (0001 creates
+            # CourtRecord directly), so the id sequence is the default
+            # records_courtrecord_id_seq.
+            cursor.execute("SELECT last_value FROM records_courtrecord_id_seq")
             assert cursor.fetchone()[0] == 1
         # A fresh insert gets id 1 again (with DELETE the sequence would keep
         # advancing past first.id + 1).
@@ -522,35 +594,100 @@ class TestFlush:
         assert CourtRecord.objects.count() == 0
 
 
+class TestDebugWarning:
+    """handle() warns when seeding a large count under DEBUG=True."""
+
+    def test_warns_on_large_count_with_debug(self, monkeypatch):
+        import io
+
+        from django.conf import settings
+
+        monkeypatch.setattr(settings, "DEBUG", True)
+        cmd = Command(stdout=io.StringIO())
+        monkeypatch.setattr(Command, "_seed", lambda self, *a, **k: None)
+        monkeypatch.setattr(cmd, "_print_sample_cases", lambda: None)
+
+        cmd.handle(count=2_000_000, flush=False, seed=42, as_of=None, no_cases=True, print_cases=False)
+
+        assert "DEBUG = True" in cmd.stdout.getvalue()
+
+    def test_no_warning_when_debug_off(self, monkeypatch):
+        import io
+
+        from django.conf import settings
+
+        monkeypatch.setattr(settings, "DEBUG", False)
+        cmd = Command(stdout=io.StringIO())
+        monkeypatch.setattr(Command, "_seed", lambda self, *a, **k: None)
+        monkeypatch.setattr(cmd, "_print_sample_cases", lambda: None)
+
+        cmd.handle(count=2_000_000, flush=False, seed=42, as_of=None, no_cases=True, print_cases=False)
+
+        assert "DEBUG = True" not in cmd.stdout.getvalue()
+
+
+def _write_synthetic_name_csv(directory: Path, stem: str, name_column: str) -> Path:
+    """Write a deterministic synthetic name-frequency CSV (the Census/SSA
+    format: <name_column>,gender,count) so full-pipeline tests never depend
+    on the gitignored downloaded data files."""
+    path = directory / f"{stem}.csv"
+    rows = [f"{name_column},gender,count"]
+    for i in range(400):
+        rows.append(f"NAME{i % 300},{'M' if i % 2 else 'F'},{1000 - (i % 97)}")
+    path.write_text("\n".join(rows) + "\n")
+    return path
+
+
+@pytest.fixture(scope="module")
+def synthetic_name_csvs(tmp_path_factory) -> tuple[Path, Path]:
+    """Small synthetic first/last name-frequency CSVs standing in for the
+    (gitignored) downloaded Census/SSA data, so the full _seed() pipeline can
+    run in CI without the data files."""
+    directory = tmp_path_factory.mktemp("synthetic_names")
+    return (
+        _write_synthetic_name_csv(directory, "us_forenames", "forename"),
+        _write_synthetic_name_csv(directory, "us_surnames", "surname"),
+    )
+
+
 class TestReproducibility:
     """(seed, count, as-of) must fully determine the generated rows.
 
     Runs _seed() in-memory with a stubbed _bulk_insert that captures the
-    DataFrames, so no database is involved.
+    DataFrames, so no database is involved. Name data comes from small
+    synthetic CSVs (the synthetic_name_csvs fixture), not the downloaded
+    data files.
     """
 
     @staticmethod
-    def _run_seed(count: int, seed: int, as_of: date) -> pl.DataFrame:
+    def _run_seed(
+        count: int, seed: int, as_of: date, synthetic_name_csvs: tuple[Path, Path], monkeypatch
+    ) -> pl.DataFrame:
+        # Point the module-level data constants at the synthetic CSVs for the
+        # duration of this test (auto-reverted by monkeypatch on teardown).
+        forenames, surnames = synthetic_name_csvs
+        monkeypatch.setattr(seed_data, "FORENAMES_CSV", forenames)
+        monkeypatch.setattr(seed_data, "SURNAMES_CSV", surnames)
         cmd = Command()
         captured: list[pl.DataFrame] = []
         cmd._bulk_insert = lambda df: captured.append(df)
         cmd._seed(count, seed, as_of)
         return pl.concat(captured)
 
-    def test_same_seed_count_asof_reproduces_rows(self):
+    def test_same_seed_count_asof_reproduces_rows(self, synthetic_name_csvs, monkeypatch):
         """Two runs with the same (seed, count, as-of) produce identical rows."""
-        a = self._run_seed(300, 42, AS_OF)
-        b = self._run_seed(300, 42, AS_OF)
+        a = self._run_seed(300, 42, AS_OF, synthetic_name_csvs, monkeypatch)
+        b = self._run_seed(300, 42, AS_OF, synthetic_name_csvs, monkeypatch)
 
         # person_id is an Object (UUID) column; compare it by value, the rest by frame equality
         assert a.drop("person_id").equals(b.drop("person_id"))
         assert a["person_id"].to_list() == b["person_id"].to_list()
 
-    def test_person_ids_deterministic_and_seed_dependent(self):
+    def test_person_ids_deterministic_and_seed_dependent(self, synthetic_name_csvs, monkeypatch):
         """Same seed → identical person_id set; different seed → different set."""
-        a = self._run_seed(300, 42, AS_OF)
-        b = self._run_seed(300, 42, AS_OF)
-        c = self._run_seed(300, 7, AS_OF)
+        a = self._run_seed(300, 42, AS_OF, synthetic_name_csvs, monkeypatch)
+        b = self._run_seed(300, 42, AS_OF, synthetic_name_csvs, monkeypatch)
+        c = self._run_seed(300, 7, AS_OF, synthetic_name_csvs, monkeypatch)
 
         pids_a = set(a["person_id"].to_list())
         pids_b = set(b["person_id"].to_list())
@@ -559,11 +696,11 @@ class TestReproducibility:
         assert pids_a == pids_b
         assert pids_a != pids_c
 
-    def test_as_of_derives_dobs(self):
+    def test_as_of_derives_dobs(self, synthetic_name_csvs, monkeypatch):
         """DOBs derive from the --as-of date: all DOBs <= as-of, and the same
         seed with a shifted as-of shifts every DOB by exactly the delta."""
-        a = self._run_seed(200, 42, date(2026, 1, 1))
-        b = self._run_seed(200, 42, date(2025, 1, 1))
+        a = self._run_seed(200, 42, date(2026, 1, 1), synthetic_name_csvs, monkeypatch)
+        b = self._run_seed(200, 42, date(2025, 1, 1), synthetic_name_csvs, monkeypatch)
 
         dobs_a = a["date_of_birth"].to_list()
         dobs_b = b["date_of_birth"].to_list()
