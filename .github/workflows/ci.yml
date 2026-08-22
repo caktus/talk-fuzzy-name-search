@@ -77,6 +77,16 @@ jobs:
       - name: Run test suite
         run: uv run pytest tests/ -q
 
+      # The name-frequency CSVs (us_forenames.csv / us_surnames.csv) are
+      # gitignored local artifacts, so regenerate them from the Kaggle source
+      # dataset the same way the README tells local devs (kagglehub is in the
+      # dev group, already synced). Run from name_dataset/ so the CSVs land
+      # where seed_data expects them.
+      - name: Generate name-frequency data
+        run: |
+          cd name_dataset
+          uv run python download_name_data.py
+
       # Small-seed smoke (RECS P2-18): seed 10K rows in a SCRATCH database
       # -- never the fuzzy_demo service DB, never anything close to 54M.
       # migrate first: seed_data assumes the schema (and extensions) exist.
