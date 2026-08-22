@@ -86,7 +86,7 @@ uv run python manage.py migrate records 0002
 # Create fake data
 uv run python manage.py seed_data --count 100000 --flush --seed 42 --as-of 2026-01-01
 
-# Full 54M stage dataset. Rreference runs:
+# Full 54M stage dataset. Reference runs:
 # ~100 min on a 40 GB Linux VM w/ PCIe 5.0 X4 NVME
 # ~4 hours on a 36 GB MacBook Pro M3 Max (2023)
 
@@ -94,17 +94,19 @@ uv run python manage.py seed_data --count 100000 --flush --seed 42 --as-of 2026-
 
 # DEBUG=False time uv run python manage.py seed_data --count 54000000 --flush --seed 42 --as-of 2026-01-01
 
-# Re-run the subsequent migrations to add indexes
+# Add non-gist indexes
+# ~5 min on MBP M3 Max w/ 54M records
+# ~2.5 min on Linux VM
 time uv run python manage.py migrate records 0003
+# Add gist index (slow)
+# ~20 min on MBP M3 Max w/ 54M records)
+# ~14 min on Linux VM
 time uv run python manage.py migrate records 0004
 
 # Run
 uv run python manage.py runserver # Web demo (localhost:8000)
 uv run pytest tests/ # Test suite
 ```
-
-The pre-rewrite CSV pipeline lives in `scripts/legacy/` for reference; it is
-not part of this flow (see `scripts/legacy/README.md`).
 
 ## Sharing the demo data
 
@@ -140,7 +142,6 @@ uv run marimo edit --watch --host 0.0.0.0 slides.py
 
 - **`records/`** -- Django app with `CourtRecord` model, the `search_unified()` search API, and web views
 - **`slides.py`** -- Marimo slide deck for the conference presentation (drives the same `CourtRecord` model as the web UI)
-- **`scripts/legacy/`** -- Pre-rewrite CSV data pipeline (superseded by `manage.py seed_data`)
 - **`tests/`** -- Test suite
 
 ## Architecture

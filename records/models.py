@@ -14,22 +14,62 @@ from django.contrib.postgres.fields import ArrayField
 from django.contrib.postgres.indexes import GinIndex, GistIndex, OpClass
 from django.contrib.postgres.search import TrigramDistance
 from django.db import models
-from django.db.models import F, Q, Value
+from django.db.models import F, IntegerField, Q, Value
 from django.db.models.expressions import ExpressionWrapper, RawSQL
 from django.db.models.fields import BooleanField, UUIDField
 from django.db.models.functions import Upper
 
 from .expressions import LevenshteinLessEqual
-from .phonetics import resolve_variants
 
 # Minimum pg_trgm similarity() a result must reach, applied per provided name
-# by every trigram search path (standalone search_trigram, trigram_ordered,
-# and therefore search_unified's trigram mode and the EXPLAIN endpoint).
+# by every trigram search path (trigram_ordered, and therefore search_unified's
+# trigram mode and the EXPLAIN endpoint).
 # 0.3 (pg_trgm's own similarity_threshold default) keeps close variants (a
 # deleted/inserted letter: similarity("Smit", "Smith") = 0.57,
 # similarity("BEJNAMIN", "BENJAMIN") = 0.385) while still cutting most of the
 # noise a bare KNN top-100 would surface for a rare spelling.
 TRIGRAM_SIMILARITY_CUTOFF = 0.3
+
+# Bitmask values for the _match_source annotation. The trigram bit is set in
+# Python for the KNN top-up rows, not in the SQL CASE expression.
+MATCH_SOURCE_BITS = {
+    "prefix": 1,
+    "legacy": 2,
+    "soundex": 4,
+    "dm": 16,
+    "trigram": 32,
+}
+
+# mode -> (bit, per-name SQL template with {field}, param transform)
+_MATCH_SOURCE_MODES = {
+    "prefix": (MATCH_SOURCE_BITS["prefix"], "UPPER({field}) LIKE %s", lambda v: v.upper() + "%"),
+    "legacy": (MATCH_SOURCE_BITS["legacy"], "{field} ILIKE %s", lambda v: "%" + v + "%"),
+    "soundex": (MATCH_SOURCE_BITS["soundex"], "SOUNDEX(UPPER({field})) = SOUNDEX(%s)", lambda v: v.upper()),
+    "dm": (
+        MATCH_SOURCE_BITS["dm"],
+        "DAITCH_MOKOTOFF(UPPER({field})) && DAITCH_MOKOTOFF(%s)",
+        lambda v: v.upper(),
+    ),
+}
+
+
+def _match_source_case(modes: list[str], first_name: str, last_name: str) -> tuple[list[str], list]:
+    """Build the per-mode CASE snippets and params for the _match_source bitmask."""
+    parts: list[str] = []
+    params: list = []
+    for mode, (bit, template, make_param) in _MATCH_SOURCE_MODES.items():
+        if mode not in modes:
+            continue
+        preds = []
+        if first_name:
+            preds.append(template.format(field="first_name"))
+            params.append(make_param(first_name))
+        if last_name:
+            preds.append(template.format(field="last_name"))
+            params.append(make_param(last_name))
+        if preds:
+            parts.append(f"CASE WHEN {' AND '.join(preds)} THEN {bit} ELSE 0 END")
+    return parts, params
 
 
 def _trigram_similarity_filters(first_name: str, last_name: str) -> dict:
@@ -96,34 +136,53 @@ def build_unified_filter(modes: list[str], first_name: str, last_name: str) -> Q
             q |= mode_q
 
     if "soundex" in modes:
-        fn_part = "SOUNDEX(UPPER(first_name)) = SOUNDEX(%s)" if first_name else None
-        ln_part = "SOUNDEX(UPPER(last_name)) = SOUNDEX(%s)" if last_name else None
-        if fn_part and ln_part:
-            sql, params = f"({fn_part}) AND ({ln_part})", [fn_upper, ln_upper]
-        elif fn_part:
-            sql, params = fn_part, [fn_upper]
-        elif ln_part:
-            sql, params = ln_part, [ln_upper]
-        else:
-            sql, params = None, []
+        sql, params = _phonetic_group(
+            "SOUNDEX(UPPER(first_name)) = SOUNDEX(%s)",
+            "SOUNDEX(UPPER(last_name)) = SOUNDEX(%s)",
+            first_name,
+            last_name,
+            fn_upper,
+            ln_upper,
+        )
         if sql:
             q |= ExpressionWrapper(RawSQL(sql, params), output_field=BooleanField())
 
     if "dm" in modes:
-        fn_part = "DAITCH_MOKOTOFF(UPPER(first_name)) && DAITCH_MOKOTOFF(%s)" if first_name else None
-        ln_part = "DAITCH_MOKOTOFF(UPPER(last_name)) && DAITCH_MOKOTOFF(%s)" if last_name else None
-        if fn_part and ln_part:
-            sql, params = f"({fn_part}) AND ({ln_part})", [fn_upper, ln_upper]
-        elif fn_part:
-            sql, params = fn_part, [fn_upper]
-        elif ln_part:
-            sql, params = ln_part, [ln_upper]
-        else:
-            sql, params = None, []
+        sql, params = _phonetic_group(
+            "DAITCH_MOKOTOFF(UPPER(first_name)) && DAITCH_MOKOTOFF(%s)",
+            "DAITCH_MOKOTOFF(UPPER(last_name)) && DAITCH_MOKOTOFF(%s)",
+            first_name,
+            last_name,
+            fn_upper,
+            ln_upper,
+        )
         if sql:
             q |= ExpressionWrapper(RawSQL(sql, params), output_field=BooleanField())
 
     return q
+
+
+def _phonetic_group(
+    fn_template: str,
+    ln_template: str,
+    first_name: str,
+    last_name: str,
+    fn_upper: str,
+    ln_upper: str,
+) -> tuple[str | None, list]:
+    """Build one AND-ed phonetic SQL group (soundex/dm branch of build_unified_filter).
+
+    Returns (sql, params); sql is None when neither name is provided.
+    """
+    fn_part = fn_template if first_name else None
+    ln_part = ln_template if last_name else None
+    if fn_part and ln_part:
+        return f"({fn_part}) AND ({ln_part})", [fn_upper, ln_upper]
+    if fn_part:
+        return fn_part, [fn_upper]
+    if ln_part:
+        return ln_part, [ln_upper]
+    return None, []
 
 
 def apply_levenshtein_filter(qs: CourtRecordQuerySet, first_name: str, last_name: str) -> CourtRecordQuerySet:
@@ -146,157 +205,6 @@ def apply_levenshtein_filter(qs: CourtRecordQuerySet, first_name: str, last_name
 class CourtRecordQuerySet(models.QuerySet):
     """Custom QuerySet for CourtRecord with phonetic name search methods."""
 
-    def search_phonetic(
-        self, first_name: str, last_name: str, date_of_birth: datetime.date | None = None
-    ) -> CourtRecordQuerySet:
-        """Soundex + Levenshtein search using PostgreSQL fuzzystrmatch.
-
-        Uses SOUNDEX() from the fuzzystrmatch extension for broad phonetic
-        pre-filtering (with functional B-tree index support), followed by
-        Levenshtein distance for precision filtering. The phonetic pre-filter
-        is expanded across the query name's nickname variants
-        (resolve_variants()), but the Levenshtein filter is measured against
-        the query as typed — so only nicknames within edit distance 2 of the
-        stored name match (e.g. 'Bil' -> 'Bill'); 'Bill' -> 'William'
-        (distance 4) does not.
-
-        Either name may be empty; only the provided name(s) are used to filter.
-        """
-        return self._phonetic_search(first_name, last_name, date_of_birth, is_array=False)
-
-    def search_dm(
-        self, first_name: str, last_name: str, date_of_birth: datetime.date | None = None
-    ) -> CourtRecordQuerySet:
-        """Daitch-Mokotoff + Levenshtein search using PostgreSQL fuzzystrmatch.
-
-        Uses DAITCH_MOKOTOFF() from the fuzzystrmatch extension for broad
-        phonetic pre-filtering (with functional GIN index support), followed
-        by Levenshtein distance for precision filtering. DM handles vowels and
-        multi-letter clusters differently, giving better coverage for
-        Slavic/Germanic names. Like search_phonetic(), the phonetic
-        pre-filter is expanded across the query's nickname variants
-        (resolve_variants()) but the Levenshtein filter is measured against
-        the query as typed, so nickname pairs farther than edit distance 2 do
-        not match (e.g. 'Bob' -> 'Robert', distance 4).
-
-        Either name may be empty; only the provided name(s) are used to filter.
-        """
-        return self._phonetic_search(first_name, last_name, date_of_birth, is_array=True)
-
-    def _phonetic_search(
-        self,
-        first_name: str,
-        last_name: str,
-        date_of_birth: datetime.date | None,
-        is_array: bool,
-    ) -> CourtRecordQuerySet:
-        """Shared phonetic + Levenshtein search."""
-        if not first_name and not last_name and not date_of_birth:
-            return self.none()
-
-        qs = self
-        matched = False
-
-        if first_name:
-            qs, matched_first = self._apply_phonetic_filter(qs, "first_name", first_name, is_array)
-            matched = matched or matched_first
-
-        if last_name:
-            qs, matched_last = self._apply_phonetic_filter(qs, "last_name", last_name, is_array)
-            matched = matched or matched_last
-
-        if date_of_birth:
-            qs = qs.filter(date_of_birth=date_of_birth)
-            matched = True
-
-        if not matched:
-            return self.none()
-
-        return qs
-
-    def _apply_phonetic_filter(
-        self,
-        qs: CourtRecordQuerySet,
-        field_name: str,
-        query_name: str,
-        is_array: bool,
-    ) -> tuple[CourtRecordQuerySet, bool]:
-        """Apply phonetic pre-filter + Levenshtein precision filter on one name field.
-
-        Returns (filtered_queryset, whether_any_filter_was_applied).
-        """
-        variants = resolve_variants(query_name)
-        if not variants:
-            return qs, False
-
-        if is_array:
-            # DM: text[] overlap — OR across all variants
-            or_parts = " OR ".join(f"DAITCH_MOKOTOFF(UPPER({field_name})) && DAITCH_MOKOTOFF(%s)" for _ in variants)
-            qs = qs.filter(
-                ExpressionWrapper(
-                    RawSQL(or_parts, [v.upper() for v in variants]),
-                    output_field=BooleanField(),
-                )
-            )
-        else:
-            # Soundex: scalar equality — OR across all variants
-            or_parts = " OR ".join(f"SOUNDEX(UPPER({field_name})) = SOUNDEX(%s)" for _ in variants)
-            qs = qs.filter(
-                ExpressionWrapper(
-                    RawSQL(or_parts, [v.upper() for v in variants]),
-                    output_field=BooleanField(),
-                )
-            )
-
-        # Levenshtein precision filter
-        qs = qs.annotate(
-            **{
-                f"_{field_name}_dist": LevenshteinLessEqual(
-                    Upper(F(field_name)),
-                    Value(query_name.upper()),
-                    Value(2),
-                )
-            }
-        ).filter(**{f"_{field_name}_dist__lte": 2})
-
-        return qs, True
-
-    def search_trigram(
-        self, first_name: str, last_name: str, date_of_birth: datetime.date | None = None
-    ) -> CourtRecordQuerySet:
-        """Trigram similarity search via pg_trgm KNN.
-
-        Uses Django's built-in ``TrigramDistance`` (the ``<->`` KNN operator,
-        from ``django.contrib.postgres.search``) rather than raw SQL.
-
-        Single name: GiST index-ordered scan via ``<->`` — fast, no threshold.
-
-        Both names: chained ``ORDER BY`` (``last_name <-> b, first_name <-> a``)
-        uses the last_name GiST index for incremental-sort. Results ranked
-        almost entirely by last-name closeness — first_name breaks ties only.
-        """
-        if not first_name and not last_name and not date_of_birth:
-            return self.none()
-
-        qs = self
-        if date_of_birth:
-            qs = qs.filter(date_of_birth=date_of_birth)
-        qs = _apply_trigram_similarity_filter(qs, first_name, last_name)
-
-        if first_name and last_name:
-            return qs.annotate(
-                _last_dist=TrigramDistance(F("last_name"), Value(last_name)),
-                _first_dist=TrigramDistance(F("first_name"), Value(first_name)),
-            ).order_by("_last_dist", "_first_dist")
-
-        if last_name:
-            return qs.annotate(_distance=TrigramDistance(F("last_name"), Value(last_name))).order_by("_distance")
-
-        if first_name:
-            return qs.annotate(_distance=TrigramDistance(F("first_name"), Value(first_name))).order_by("_distance")
-
-        return qs
-
     def trigram_ordered(self, first_name: str, last_name: str) -> CourtRecordQuerySet:
         """Apply the pg_trgm KNN ORDER BY used by search_unified()'s trigram mode.
 
@@ -312,45 +220,6 @@ class CourtRecordQuerySet(models.QuerySet):
         if last_name:
             return self.annotate(_dist=TrigramDistance(F("last_name"), Value(last_name))).order_by("_dist")
         return self.annotate(_dist=TrigramDistance(F("first_name"), Value(first_name))).order_by("_dist")
-
-    def search_legacy(
-        self, first_name: str, last_name: str, date_of_birth: datetime.date | None = None
-    ) -> CourtRecordQuerySet:
-        """Legacy LIKE-based search (for comparison/benchmarking).
-
-        Uses unindexed LIKE '%name%' queries -- intentionally slow
-        and incapable of fuzzy matching. Either name may be empty; only the
-        provided name(s) are used to filter.
-        """
-        if not first_name and not last_name and not date_of_birth:
-            return self.none()
-        qs = self
-        if first_name:
-            qs = qs.filter(first_name__icontains=first_name)
-        if last_name:
-            qs = qs.filter(last_name__icontains=last_name)
-        if date_of_birth:
-            qs = qs.filter(date_of_birth=date_of_birth)
-        return qs
-
-    def search_exact(
-        self, first_name: str, last_name: str, date_of_birth: datetime.date | None = None
-    ) -> CourtRecordQuerySet:
-        """Exact startswith matching (fast, no fuzzy tolerance).
-
-        Uses istartswith for prefix matching with B-tree index support.
-        Either name may be empty; only the provided name(s) are used to filter.
-        """
-        if not first_name and not last_name and not date_of_birth:
-            return self.none()
-        qs = self
-        if first_name:
-            qs = qs.filter(first_name__istartswith=first_name)
-        if last_name:
-            qs = qs.filter(last_name__istartswith=last_name)
-        if date_of_birth:
-            qs = qs.filter(date_of_birth=date_of_birth)
-        return qs
 
     def search_unified(
         self,
@@ -389,13 +258,8 @@ class CourtRecordQuerySet(models.QuerySet):
             materializes and caps at 100, so callers get a bounded, already-
             fetched list and timing around the call covers the DB fetch.
         """
-        from django.db.models import IntegerField
-
         if not first_name and not last_name and not date_of_birth:
             return []
-
-        fn_upper = first_name.upper() if first_name else ""
-        ln_upper = last_name.upper() if last_name else ""
 
         # Base-mode conditions, shared with the EXPLAIN endpoint so both
         # use the exact same query construction as the search that ran.
@@ -427,60 +291,9 @@ class CourtRecordQuerySet(models.QuerySet):
             qs = apply_levenshtein_filter(qs, first_name, last_name)
 
         # Annotate match_source bitmask using SQL CASE expressions
-        # prefix=1, legacy=2, soundex=4, dm=16 (trigram=32 is set in Python
-        # for the KNN top-up rows, not in SQL)
-        annotation_parts = []
-        annotation_params = []
-
-        if "prefix" in modes and first_name and last_name:
-            annotation_parts.append(
-                "CASE WHEN UPPER(first_name) LIKE %s AND UPPER(last_name) LIKE %s THEN 1 ELSE 0 END"
-            )
-            annotation_params.extend([fn_upper + "%", ln_upper + "%"])
-        elif "prefix" in modes and first_name:
-            annotation_parts.append("CASE WHEN UPPER(first_name) LIKE %s THEN 1 ELSE 0 END")
-            annotation_params.append(fn_upper + "%")
-        elif "prefix" in modes and last_name:
-            annotation_parts.append("CASE WHEN UPPER(last_name) LIKE %s THEN 1 ELSE 0 END")
-            annotation_params.append(ln_upper + "%")
-
-        if "legacy" in modes and first_name and last_name:
-            annotation_parts.append("CASE WHEN first_name ILIKE %s AND last_name ILIKE %s THEN 2 ELSE 0 END")
-            annotation_params.extend(["%" + first_name + "%", "%" + last_name + "%"])
-        elif "legacy" in modes and first_name:
-            annotation_parts.append("CASE WHEN first_name ILIKE %s THEN 2 ELSE 0 END")
-            annotation_params.append("%" + first_name + "%")
-        elif "legacy" in modes and last_name:
-            annotation_parts.append("CASE WHEN last_name ILIKE %s THEN 2 ELSE 0 END")
-            annotation_params.append("%" + last_name + "%")
-
-        if "soundex" in modes and first_name and last_name:
-            annotation_parts.append(
-                "CASE WHEN SOUNDEX(UPPER(first_name)) = SOUNDEX(%s) AND SOUNDEX(UPPER(last_name)) = SOUNDEX(%s) THEN 4 ELSE 0 END"
-            )
-            annotation_params.extend([fn_upper, ln_upper])
-        elif "soundex" in modes and first_name:
-            annotation_parts.append("CASE WHEN SOUNDEX(UPPER(first_name)) = SOUNDEX(%s) THEN 4 ELSE 0 END")
-            annotation_params.append(fn_upper)
-        elif "soundex" in modes and last_name:
-            annotation_parts.append("CASE WHEN SOUNDEX(UPPER(last_name)) = SOUNDEX(%s) THEN 4 ELSE 0 END")
-            annotation_params.append(ln_upper)
-
-        if "dm" in modes and first_name and last_name:
-            annotation_parts.append(
-                "CASE WHEN DAITCH_MOKOTOFF(UPPER(first_name)) && DAITCH_MOKOTOFF(%s) AND DAITCH_MOKOTOFF(UPPER(last_name)) && DAITCH_MOKOTOFF(%s) THEN 16 ELSE 0 END"
-            )
-            annotation_params.extend([fn_upper, ln_upper])
-        elif "dm" in modes and first_name:
-            annotation_parts.append(
-                "CASE WHEN DAITCH_MOKOTOFF(UPPER(first_name)) && DAITCH_MOKOTOFF(%s) THEN 16 ELSE 0 END"
-            )
-            annotation_params.append(fn_upper)
-        elif "dm" in modes and last_name:
-            annotation_parts.append(
-                "CASE WHEN DAITCH_MOKOTOFF(UPPER(last_name)) && DAITCH_MOKOTOFF(%s) THEN 16 ELSE 0 END"
-            )
-            annotation_params.append(ln_upper)
+        # (bits in MATCH_SOURCE_BITS; trigram is set in Python for the
+        # KNN top-up rows, not in SQL)
+        annotation_parts, annotation_params = _match_source_case(modes, first_name, last_name)
 
         if annotation_parts:
             sql = " | ".join(annotation_parts)
@@ -508,7 +321,7 @@ class CourtRecordQuerySet(models.QuerySet):
             tri_qs = tri_qs.trigram_ordered(first_name, last_name)
             for obj in tri_qs[:100]:
                 if obj.id not in main_ids:
-                    obj._match_source = 32
+                    obj._match_source = MATCH_SOURCE_BITS["trigram"]
                     main_list.append(obj)
                     main_ids.add(obj.id)
                     if len(main_list) >= 100:

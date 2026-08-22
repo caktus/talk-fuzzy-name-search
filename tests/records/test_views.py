@@ -120,10 +120,10 @@ class TestSearchByDateOfBirth:
 
     def test_date_of_birth_narrows_trigram_results(self, client):
         """Trigram mode returns only rows with the queried DOB that clear the
-        0.4 similarity() cutoff on every provided name, closest match first.
+        0.3 similarity() cutoff on every provided name, closest match first.
 
         The Robert Jones row shares the DOB but its names have zero trigram
-        overlap with 'John Smith' (similarity 0 < 0.4), so the cutoff cuts it.
+        overlap with 'John Smith' (similarity 0 < 0.3), so the cutoff cuts it.
         """
         response = client.get("/search/?modes=trigram&first_name=John&last_name=Smith&date_of_birth=1990-05-15")
         assert response.status_code == 200
@@ -197,39 +197,6 @@ class TestSearchSortByDateOfBirth:
         explain = client.get("/search/explain/?last_name=Smith")
         assert explain.status_code == 200
         assert "ORDER BY" not in explain.context["sql"]
-
-
-class TestSearchExactQuerySet:
-    """Test the search_exact QuerySet method."""
-
-    @pytest.fixture(autouse=True)
-    def _seed_data(self):
-        CourtRecord.objects.create(
-            first_name="John",
-            last_name="Smith",
-            date_of_birth="1990-05-15",
-        )
-        CourtRecord.objects.create(
-            first_name="Jonh",
-            last_name="Smyth",
-            date_of_birth="1985-03-20",
-        )
-
-    def test_search_exact_finds_prefix_match(self):
-        """search_exact finds prefix matches."""
-        results = list(CourtRecord.objects.search_exact("John", "Smith"))
-        assert len(results) == 1
-        assert results[0].first_name == "John"
-
-    def test_search_exact_case_insensitive(self):
-        """search_exact is case-insensitive."""
-        results = list(CourtRecord.objects.search_exact("john", "smith"))
-        assert len(results) == 1
-
-    def test_search_exact_no_typo_tolerance(self):
-        """search_exact does not tolerate typos."""
-        results = list(CourtRecord.objects.search_exact("Jonn", "Smit"))
-        assert len(results) == 0
 
 
 class TestLevenshteinFilter:
@@ -510,6 +477,22 @@ class TestPhoneticCodes:
         r = response.context["results"][0]
         assert "phonetic_codes" in r
         assert "dm_fn" in r["phonetic_codes"]
+
+    def test_dm_mode_with_empty_first_name(self, client):
+        """Regression: DAITCH_MOKOTOFF(UPPER('')) returns NULL, and the batch
+        phonetic-code query previously crashed on `", ".join(None)` when a
+        result row had an empty first name (e.g. ?modes=dm&first_name=&last_name=smith)."""
+        CourtRecord.objects.create(
+            first_name="",
+            last_name="Smith",
+            date_of_birth=date(1990, 1, 1),
+        )
+        response = client.get("/search/?modes=dm&first_name=&last_name=smith")
+        assert response.status_code == 200
+        r = response.context["results"][0]
+        assert r["phonetic_codes"]["dm_fn"] == ""
+        assert r["phonetic_codes"]["dm_ln"] != ""
+        assert r["phonetic_codes"]["soundex_fn"] == ""
 
     def test_dm_codes_rendered_as_joined_strings(self, client):
         """B16: DM codes (text[] in SQL) are joined into human-readable strings,

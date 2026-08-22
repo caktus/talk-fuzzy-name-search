@@ -311,7 +311,7 @@ class TestClusterExpansion:
         rng = np.random.default_rng(42)
 
         sampled = _sampled_frame(100, rng, name_csv)
-        identities = cmd._assign_attributes(sampled, 100, rng, fake, AS_OF)
+        identities = cmd._assign_attributes(sampled, rng, fake, AS_OF)
         expanded = cmd._expand_clusters(identities, rng)
 
         expected_total = int(identities["cluster_size"].sum())
@@ -325,7 +325,7 @@ class TestClusterExpansion:
         rng = np.random.default_rng(42)
 
         sampled = _sampled_frame(100, rng, name_csv)
-        identities = cmd._assign_attributes(sampled, 100, rng, fake, AS_OF)
+        identities = cmd._assign_attributes(sampled, rng, fake, AS_OF)
         expanded = cmd._expand_clusters(identities, rng)
 
         # Group by person_id string and verify all share the same DOB
@@ -344,7 +344,7 @@ class TestClusterExpansion:
         rng = np.random.default_rng(42)
 
         sampled = _sampled_frame(100, rng, name_csv)
-        identities = cmd._assign_attributes(sampled, 100, rng, fake, AS_OF)
+        identities = cmd._assign_attributes(sampled, rng, fake, AS_OF)
         expanded = cmd._expand_clusters(identities, rng)
 
         for row in expanded.iter_rows(named=True):
@@ -362,7 +362,7 @@ class TestBulkInsert:
         rng = np.random.default_rng(42)
 
         sampled = _sampled_frame(200, rng, name_csv)
-        identities = cmd._assign_attributes(sampled, 200, rng, fake, AS_OF)
+        identities = cmd._assign_attributes(sampled, rng, fake, AS_OF)
         expanded = cmd._expand_clusters(identities, rng)
 
         assert CourtRecord.objects.count() == 0
@@ -383,7 +383,7 @@ class TestBulkInsert:
         rng = np.random.default_rng(42)
 
         sampled = _sampled_frame(200, rng, name_csv)
-        identities = cmd._assign_attributes(sampled, 200, rng, fake, AS_OF)
+        identities = cmd._assign_attributes(sampled, rng, fake, AS_OF)
         expanded = cmd._expand_clusters(identities, rng)
 
         original_log = connection.queries_log
@@ -428,7 +428,7 @@ class TestBulkInsert:
         rng = np.random.default_rng(42)
 
         sampled = _sampled_frame(200, rng, name_csv)
-        identities = cmd._assign_attributes(sampled, 200, rng, fake, AS_OF)
+        identities = cmd._assign_attributes(sampled, rng, fake, AS_OF)
         expanded = cmd._expand_clusters(identities, rng)
 
         cmd._bulk_insert(expanded)
@@ -443,7 +443,7 @@ class TestBulkInsert:
         rng = np.random.default_rng(42)
 
         sampled = _sampled_frame(200, rng, name_csv)
-        identities = cmd._assign_attributes(sampled, 200, rng, fake, AS_OF)
+        identities = cmd._assign_attributes(sampled, rng, fake, AS_OF)
         expanded = cmd._expand_clusters(identities, rng)
 
         cmd._bulk_insert(expanded)
@@ -458,7 +458,7 @@ class TestBulkInsert:
         rng = np.random.default_rng(42)
 
         sampled = _sampled_frame(1000, rng, name_csv)
-        identities = cmd._assign_attributes(sampled, 1000, rng, fake, AS_OF)
+        identities = cmd._assign_attributes(sampled, rng, fake, AS_OF)
         expanded = cmd._expand_clusters(identities, rng)
 
         cmd._bulk_insert(expanded)
@@ -473,7 +473,7 @@ class TestBulkInsert:
         rng = np.random.default_rng(42)
 
         sampled = _sampled_frame(1000, rng, name_csv)
-        identities = cmd._assign_attributes(sampled, 1000, rng, fake, AS_OF)
+        identities = cmd._assign_attributes(sampled, rng, fake, AS_OF)
         expanded = cmd._expand_clusters(identities, rng)
 
         cmd._bulk_insert(expanded)

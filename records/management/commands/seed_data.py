@@ -12,7 +12,7 @@ Distribution model:
        name_dataset/us_surnames.csv (columns surname,gender,count),
        downloaded by name_dataset/download_name_data.py (see README). Gender
        rows are summed
-       together (Person has no gender field), names are uppercased and deduped,
+       together (CourtRecord has no gender field), names are uppercased and deduped,
        and each name's raw `count` is used directly as its sampling weight.
     2. Name sampling: first_name and last_name are drawn INDEPENDENTLY per
        identity, each proportional to its Census/SSA count (precomputed
@@ -72,7 +72,7 @@ from records.phonetics import NICKNAME_MAP
 NAME_DATASET_DIR = Path(__file__).resolve().parents[3] / "name_dataset"
 FORENAMES_CSV = NAME_DATASET_DIR / "us_forenames.csv"
 SURNAMES_CSV = NAME_DATASET_DIR / "us_surnames.csv"
-# Person.first_name / last_name are CharField(max_length=50); longer dataset
+# CourtRecord.first_name / last_name are CharField(max_length=50); longer dataset
 # entries (a handful of names with combining-mark runs) are dropped at load.
 MAX_NAME_LENGTH = 50
 
@@ -223,7 +223,7 @@ class Command(BaseCommand):
             firsts = self._sample_names(first_names, first_cdf, batch_identities, rng)
             lasts = self._sample_names(last_names, last_cdf, batch_identities, rng)
             sampled = pl.DataFrame({"first_name": firsts, "last_name": lasts})
-            identities = self._assign_attributes(sampled, batch_identities, rng, fake, as_of)
+            identities = self._assign_attributes(sampled, rng, fake, as_of)
             batch_rows = self._expand_clusters(identities, rng)
             self.stdout.write(f"    generate: {time.perf_counter() - t0:.1f}s ({len(batch_rows):,} rows)")
 
@@ -269,9 +269,9 @@ class Command(BaseCommand):
 
         The file has columns ``<name_column>,gender,count`` where ``count`` is
         the raw Census/SSA occurrence count for that name. Gender rows are
-        summed together (Person has no gender field), names are uppercased
+        summed together (CourtRecord has no gender field), names are uppercased
         and deduped, and names longer than MAX_NAME_LENGTH characters are
-        dropped (Person.first_name/last_name are CharField(max_length=50)).
+        dropped (CourtRecord.first_name/last_name are CharField(max_length=50)).
 
         Returns ``names`` (a str ndarray, sorted by count descending, ties by
         name — stable ordering makes the sampled output deterministic for a
@@ -314,9 +314,7 @@ class Command(BaseCommand):
         u = rng.random(sample_size)
         return names[np.searchsorted(cdf, u)]
 
-    def _assign_attributes(
-        self, df: pl.DataFrame, count: int, rng: np.random.Generator, fake: Faker, as_of: date
-    ) -> pl.DataFrame:
+    def _assign_attributes(self, df: pl.DataFrame, rng: np.random.Generator, fake: Faker, as_of: date) -> pl.DataFrame:
         """Assign DOB, person_id, cluster_size, middle_name, nicknames per identity.
 
         DOBs are drawn relative to as_of (the --as-of reference date), so the

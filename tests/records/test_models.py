@@ -7,12 +7,11 @@ from datetime import date
 
 import pytest
 
-from records.models import CourtRecord, CourtRecordQuerySet
+from records.models import CourtRecord, _phonetic_group
 from tests.records.factories import CourtRecordFactory
 
-pytestmark = pytest.mark.django_db
 
-
+@pytest.mark.django_db
 class TestCourtRecordModel:
     """Characterize CourtRecord model creation and behavior."""
 
@@ -60,100 +59,7 @@ class TestCourtRecordModel:
         assert "Smith" in str(person)
 
 
-class TestCourtRecordQuerySet:
-    """Characterize CourtRecordQuerySet search methods."""
-
-    def test_search_phonetic_returns_queryset_empty_table(self):
-        """search_phonetic returns a QuerySet without raising on empty table."""
-        qs = CourtRecord.objects.search_phonetic("John", "Smith")
-        assert isinstance(qs, CourtRecordQuerySet)
-
-    def test_search_trigram_returns_queryset_empty_table(self):
-        """search_trigram returns a QuerySet without raising on empty table."""
-        qs = CourtRecord.objects.search_trigram("John", "Smith")
-        assert isinstance(qs, CourtRecordQuerySet)
-
-    def test_search_dm_returns_queryset_empty_table(self):
-        """search_dm returns a QuerySet without raising on empty table."""
-        qs = CourtRecord.objects.search_dm("John", "Smith")
-        assert isinstance(qs, CourtRecordQuerySet)
-
-    def test_search_legacy_returns_queryset_empty_table(self):
-        """search_legacy returns a QuerySet without raising on empty table."""
-        qs = CourtRecord.objects.search_legacy("John", "Smith")
-        assert isinstance(qs, CourtRecordQuerySet)
-
-    def test_search_legacy_finds_exact_match(self):
-        """search_legacy finds records with exact name matches."""
-        CourtRecord.objects.create(
-            first_name="John",
-            last_name="Smith",
-            date_of_birth="1990-01-15",
-        )
-        results = CourtRecord.objects.search_legacy("John", "Smith")
-        assert results.count() >= 1
-
-    def test_search_legacy_case_insensitive(self):
-        """search_legacy is case-insensitive (icontains)."""
-        CourtRecord.objects.create(
-            first_name="John",
-            last_name="Smith",
-            date_of_birth="1990-01-15",
-        )
-        results = CourtRecord.objects.search_legacy("john", "smith")
-        assert results.count() >= 1
-
-
-class TestDateOfBirthFilter:
-    """Characterize the required date_of_birth field and filtering across all search modes."""
-
-    @pytest.fixture(autouse=True)
-    def _seed_data(self):
-        self.matching_dob = "1990-05-15"
-        self.other_dob = "1985-01-01"
-        CourtRecord.objects.create(
-            first_name="John",
-            last_name="Smith",
-            date_of_birth=self.matching_dob,
-        )
-        CourtRecord.objects.create(
-            first_name="John",
-            last_name="Smith",
-            date_of_birth=self.other_dob,
-        )
-
-    def test_search_legacy_filters_by_date_of_birth(self):
-        results = CourtRecord.objects.search_legacy("John", "Smith", self.matching_dob)
-        assert results.count() == 1
-        assert str(results.first().date_of_birth) == self.matching_dob
-
-    def test_search_exact_filters_by_date_of_birth(self):
-        results = CourtRecord.objects.search_exact("John", "Smith", self.matching_dob)
-        assert results.count() == 1
-
-    def test_search_phonetic_filters_by_date_of_birth(self):
-        results = CourtRecord.objects.search_phonetic("John", "Smith", self.matching_dob)
-        assert results.count() == 1
-
-    def test_search_dm_filters_by_date_of_birth(self):
-        results = CourtRecord.objects.search_dm("John", "Smith", self.matching_dob)
-        assert results.count() == 1
-
-    def test_search_trigram_filters_by_date_of_birth(self):
-        results = CourtRecord.objects.search_trigram("John", "Smith", self.matching_dob)
-        assert results.count() == 1
-
-    def test_search_trigram_date_of_birth_only(self):
-        """date_of_birth alone (no names) is enough to trigger a trigram search."""
-        results = CourtRecord.objects.search_trigram("", "", self.matching_dob)
-        assert results.count() == 1
-
-    def test_search_legacy_no_criteria_returns_empty(self):
-        """With no name and no date_of_birth, search_legacy returns nothing."""
-        results = CourtRecord.objects.search_legacy("", "")
-        assert results.count() == 0
-
-
+@pytest.mark.django_db
 class TestLevenshteinOnlySemantics:
     """B1/B13: Levenshtein is a precision filter on top of base modes, not a standalone search."""
 
@@ -191,6 +97,7 @@ class TestLevenshteinOnlySemantics:
         assert len(CourtRecord.objects.search_unified(["legacy"], "J", "Smith", self.dob)) == 1
 
 
+@pytest.mark.django_db
 class TestDobOnlySearchCap:
     """B7: a DOB-only search is capped at 100 rows and returns a materialized list."""
 
@@ -222,14 +129,15 @@ class TestDobOnlySearchCap:
         assert len(results) == 1
 
 
+@pytest.mark.django_db
 class TestTrigramVisibility:
     """B6: trigram rows must stay visible when base modes would fill the whole page."""
 
     # Near-spelling variants of "Smith" that legacy (icontains) and prefix
     # (istartswith) never match, but trigram ranks close to "Smith" *and* clear
-    # the 0.4 similarity() cutoff (Smit=0.57, Smitz/Smity/Smita/Smits=0.5).
-    # (The old fixtures Smyth/Smythe/Smidt/Smyt/Smyths were all <0.4 and would be
-    # cut by the new threshold.)
+    # the 0.3 similarity() cutoff (TRIGRAM_SIMILARITY_CUTOFF) (Smit=0.57, Smitz/Smity/Smita/Smits=0.5).
+    # (The old fixtures Smyth/Smythe/Smidt/Smyt/Smyths sit around the 0.3 cutoff
+    # (0.18-0.33), so they were less reliable pins.)
     NEAR_NAMES = ["Smit", "Smitz", "Smity", "Smita", "Smits"]
 
     def _seed(self):
@@ -306,6 +214,7 @@ class TestTrigramVisibility:
         }
 
 
+@pytest.mark.django_db
 class TestSearchUnifiedSortField:
     """The page sort is a SQL ORDER BY on the base query (sort_field)."""
 
@@ -340,6 +249,7 @@ class TestSearchUnifiedSortField:
         assert [p.last_name for p in results] == ["A", "B", "C"]
 
 
+@pytest.mark.django_db
 class TestSearchUnifiedCap:
     """B16: search_unified() is annotated -> list[CourtRecord] and documented as limited to 100;
     no code path may return more than 100 rows."""
@@ -377,6 +287,7 @@ class TestSearchUnifiedCap:
         assert all(isinstance(p, CourtRecord) for p in results)
 
 
+@pytest.mark.django_db
 class TestUnifiedSearchNicknameLimitation:
     """P1-12: unified search does not expand nicknames — pins the current behavior.
 
@@ -411,7 +322,7 @@ class TestUnifiedSearchNicknameLimitation:
 
         Fails at the DM pre-filter: DAITCH_MOKOTOFF('BOB') (['770000']) and
         DAITCH_MOKOTOFF('ROBERT') (['979300']) share no code, and the unified
-        search does not expand 'Bob' to ROBERT/ROB/BOBBY via resolve_variants().
+        search does not expand 'Bob' to ROBERT/ROB/BOBBY via nickname variants.
         """
         results = CourtRecord.objects.search_unified(["dm"], "Bob", "Smith", self.dob)
         assert [(p.first_name, p.last_name) for p in results] == []
@@ -425,24 +336,13 @@ class TestUnifiedSearchNicknameLimitation:
         results = CourtRecord.objects.search_unified(["legacy", "levenshtein"], "Bil", "Smith", self.dob)
         assert [(p.first_name, p.last_name) for p in results] == [("Bill", "Smith")]
 
-    def test_standalone_search_dm_still_requires_distance_two(self):
-        """Even standalone search_dm() does not find 'Robert' for 'Bob'.
 
-        The phonetic pre-filter does expand 'Bob' to ROBERT/ROB/BOBBY via
-        resolve_variants(), but the Levenshtein precision filter is measured
-        against the query as typed: dist('ROBERT', 'BOB') = 4 > 2. Pins the
-        search_dm() docstring claim.
-        """
-        results = CourtRecord.objects.search_dm("Bob", "Smith")
-        assert [(p.first_name, p.last_name) for p in results] == []
+@pytest.mark.django_db
+class TestSoundexHeroCase:
+    """P1-11 hero case: the unified soundex mode finds "John Smith" for "John Smyth".
 
-
-class TestSearchPhoneticHeroCase:
-    """P1-11 hero case: search_phonetic("John", "Smyth") finds "John Smith".
-
-    Smyth/Smythe share Soundex code S530 with Smith and sit within edit
-    distance 2, so both the Soundex pre-filter and the Levenshtein
-    refinement accept them.
+    Smyth shares Soundex code S530 with Smith, so the soundex pre-filter
+    accepts it.
     """
 
     @pytest.fixture(autouse=True)
@@ -451,17 +351,49 @@ class TestSearchPhoneticHeroCase:
         # Decoy: same first name, different last-name soundex (J553) — must not match.
         CourtRecord.objects.create(first_name="John", last_name="Jones", date_of_birth="1990-06-15")
 
-    def test_smyth_finds_smith(self):
-        """Typo variant 'Smyth' (distance 1) finds 'John Smith'."""
-        results = CourtRecord.objects.search_phonetic("John", "Smyth")
-        assert [(p.first_name, p.last_name) for p in results] == [("John", "Smith")]
-
-    def test_smythe_finds_smith(self):
-        """Variant 'Smythe' (distance 2) still matches within the tolerance."""
-        results = CourtRecord.objects.search_phonetic("John", "Smythe")
-        assert [(p.first_name, p.last_name) for p in results] == [("John", "Smith")]
-
     def test_unified_soundex_mode_finds_smith(self):
         """The unified search's OR-ed soundex group finds him as well."""
         results = CourtRecord.objects.search_unified(["soundex"], "John", "Smyth")
         assert [(p.first_name, p.last_name) for p in results] == [("John", "Smith")]
+
+
+class TestPhoneticGroup:
+    """Pure SQL-group builder for the soundex/dm branches of build_unified_filter (no DB)."""
+
+    TEMPLATES = {
+        "soundex": (
+            "SOUNDEX(UPPER(first_name)) = SOUNDEX(%s)",
+            "SOUNDEX(UPPER(last_name)) = SOUNDEX(%s)",
+        ),
+        "dm": (
+            "DAITCH_MOKOTOFF(UPPER(first_name)) && DAITCH_MOKOTOFF(%s)",
+            "DAITCH_MOKOTOFF(UPPER(last_name)) && DAITCH_MOKOTOFF(%s)",
+        ),
+    }
+
+    @pytest.mark.parametrize("mode", ["soundex", "dm"])
+    def test_both_names(self, mode):
+        fn_tpl, ln_tpl = self.TEMPLATES[mode]
+        sql, params = _phonetic_group(fn_tpl, ln_tpl, "John", "Smith", "JOHN", "SMITH")
+        assert sql == f"({fn_tpl}) AND ({ln_tpl})"
+        assert params == ["JOHN", "SMITH"]
+
+    @pytest.mark.parametrize("mode", ["soundex", "dm"])
+    def test_first_name_only(self, mode):
+        fn_tpl, _ = self.TEMPLATES[mode]
+        sql, params = _phonetic_group(*self.TEMPLATES[mode], "John", "", "JOHN", "")
+        assert sql == fn_tpl
+        assert params == ["JOHN"]
+
+    @pytest.mark.parametrize("mode", ["soundex", "dm"])
+    def test_last_name_only(self, mode):
+        _, ln_tpl = self.TEMPLATES[mode]
+        sql, params = _phonetic_group(*self.TEMPLATES[mode], "", "Smith", "", "SMITH")
+        assert sql == ln_tpl
+        assert params == ["SMITH"]
+
+    @pytest.mark.parametrize("mode", ["soundex", "dm"])
+    def test_no_names(self, mode):
+        sql, params = _phonetic_group(*self.TEMPLATES[mode], "", "", "", "")
+        assert sql is None
+        assert params == []

@@ -10,11 +10,11 @@ dependencies = [
     "faker>=30",
     "marimo>=0.10",
     "numpy>=2.0",
-    "pandas>=3.0.5",
     "polars>=1.0",
     "django-simple-deploy>=1.4.1",
     "gunicorn>=23.0.0",
     "whitenoise>=6.7.0",
+    # Only used by the marimo slides.py SQL cells (SQLAlchemy defaults to the psycopg2 driver for postgresql:// URLs); the app's DB driver is psycopg3.
     "sqlalchemy>=2.0.52",
     "psycopg2>=2.9.12",
 ]
@@ -41,18 +41,16 @@ testpaths = ["tests"]
 [tool.ruff]
 target-version = "py314"
 line-length = 120
+# Marimo rewrites slides.py and reverts ruff's changes (f-prefix stripping,
+# trailing commas), so keep ruff off this file (mirrors the pre-commit excludes).
+extend-exclude = ["slides.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
 
 [tool.ruff.lint.per-file-ignores]
 # marimo cell functions receive cross-cell variables as arguments, so their
-# names must match the defining variables (e.g. Person, MillisecondTimer).
-# N806: cell-local constants mirror web UI naming (e.g. MATCH_BITS).
-# F821: cross-cell variables (e.g. pd) that marimo's dependency analysis
-# misses inside nested functions; resolved at runtime via the shared namespace.
-"demo.py" = ["N803", "N806", "F821"]
-# Same marimo cross-cell argument naming constraint as demo.py.
+# names must match the defining variables (e.g. Path, pl).
 "name_dataset/download_name_data.py" = ["N803"]
 # Migrations contain auto-generated SQL strings that exceed line length.
 "records/migrations/*" = ["E501"]

@@ -8,14 +8,22 @@ Provides:
 """
 
 import time
+from datetime import date
 
 from django.core.cache import cache
 from django.db import connection
 from django.http import HttpRequest, HttpResponse
 from django.template.response import TemplateResponse
-from django.utils.dateparse import parse_date
 
-from .models import TRIGRAM_SIMILARITY_CUTOFF, CourtRecord, apply_levenshtein_filter, build_unified_filter
+from .forms import BASE_MODES, SEARCH_MODES, ExplainForm, RefreshForm, SearchForm
+from .models import (
+    _MATCH_SOURCE_MODES,
+    MATCH_SOURCE_BITS,
+    TRIGRAM_SIMILARITY_CUTOFF,
+    CourtRecord,
+    apply_levenshtein_filter,
+    build_unified_filter,
+)
 
 # CourtRecord.objects.count() is a full-table COUNT(*) -- on the 54M-row demo
 # table that's a ~600ms sequential-ish scan, and it's on every page load.
@@ -32,70 +40,6 @@ def _cached_total_records() -> int:
         count = CourtRecord.objects.count()
         cache.set(_TOTAL_RECORDS_CACHE_KEY, count, _TOTAL_RECORDS_CACHE_SECONDS)
     return count
-
-
-# Search modes, each independently toggleable via checkboxes.
-SEARCH_MODES = {
-    "prefix": {
-        "label": "Exact prefix",
-        "description": "B-tree indexed istartswith — fast type-ahead, exact spelling.",
-        "default": True,
-    },
-    "soundex": {
-        "label": "Soundex",
-        "description": "Phonetic pre-filter using SOUNDEX codes.",
-        "default": False,
-    },
-    "levenshtein": {
-        "label": "Levenshtein",
-        "description": "Edit distance ≤ 2 — precision filter applied on top of other modes.",
-        "default": False,
-    },
-    "dm": {
-        "label": "Daitch-Mokotoff",
-        "description": "Phonetic codes with stronger Slavic/Germanic coverage.",
-        "default": False,
-    },
-    "trigram": {
-        "label": "Trigram",
-        "description": f"pg_trgm KNN ranking, cut at similarity() ≥ {TRIGRAM_SIMILARITY_CUTOFF} per name.",
-        "default": False,
-    },
-    "legacy": {
-        "label": "Legacy LIKE",
-        "description": "Unindexed LIKE '%name%' — slow, included for comparison.",
-        "default": False,
-    },
-}
-
-# Bitmask values for match_source annotation
-MATCH_BITS = {
-    "prefix": 1,
-    "legacy": 2,
-    "soundex": 4,
-    "dm": 16,
-    "trigram": 32,
-}
-
-DEFAULT_MODES = [k for k, v in SEARCH_MODES.items() if v["default"]]
-
-# Base modes that Levenshtein can refine. Levenshtein is a precision filter
-# on top of base modes, not a standalone search: with no base mode enabled
-# the UI disables the Levenshtein checkbox and search_unified() returns no
-# rows for a name query (see B1/B13).
-BASE_MODES = ["prefix", "legacy", "soundex", "dm", "trigram"]
-
-
-def _parse_explain_modes(request: HttpRequest) -> list[str]:
-    """Parse the explain mode list from ?modes=a,b (or legacy ?mode=a).
-
-    Unknown mode names are dropped; if nothing valid remains (or no mode was
-    given at all) fall back to ["prefix"] — the previous single-mode behavior.
-    """
-    modes_param = request.GET.get("modes") or request.GET.get("mode", "")
-    tokens = [t.strip() for t in modes_param.split(",") if t.strip()]
-    valid = [t for t in tokens if t in SEARCH_MODES]
-    return valid if valid else ["prefix"]
 
 
 def _explain_queryset_for(modes: list[str], first_name: str, last_name: str, date_of_birth=None, sort_field=""):
@@ -137,16 +81,6 @@ def _explain_queryset_for(modes: list[str], first_name: str, last_name: str, dat
     return qs[:100], "main"
 
 
-def _get_enabled_modes(request: HttpRequest) -> list[str]:
-    """Get enabled search modes from request."""
-    modes_param = request.GET.get("modes", "")
-    if modes_param:
-        enabled = [m for m in modes_param.split(",") if m in SEARCH_MODES]
-    else:
-        enabled = list(DEFAULT_MODES)
-    return enabled if enabled else list(DEFAULT_MODES)
-
-
 # Values for the ?sort= URL parameter on the results table headers.
 SORT_PARAMS = {"dob_asc": "date_of_birth", "dob_desc": "-date_of_birth"}
 
@@ -178,11 +112,11 @@ def _run_unified_search(modes: list[str], first_name: str, last_name: str, date_
             {
                 "person": record,
                 "match_source": source,
-                "has_prefix": bool(source & MATCH_BITS["prefix"]),
-                "has_legacy": bool(source & MATCH_BITS["legacy"]),
-                "has_soundex": bool(source & MATCH_BITS["soundex"]),
-                "has_dm": bool(source & MATCH_BITS["dm"]),
-                "has_trigram": bool(source & MATCH_BITS["trigram"]),
+                "has_prefix": bool(source & MATCH_SOURCE_BITS["prefix"]),
+                "has_legacy": bool(source & MATCH_SOURCE_BITS["legacy"]),
+                "has_soundex": bool(source & MATCH_SOURCE_BITS["soundex"]),
+                "has_dm": bool(source & MATCH_SOURCE_BITS["dm"]),
+                "has_trigram": bool(source & MATCH_SOURCE_BITS["trigram"]),
             }
         )
 
@@ -195,8 +129,8 @@ def _run_unified_search(modes: list[str], first_name: str, last_name: str, date_
                 SELECT p.id,
                        SOUNDEX(UPPER(p.first_name)),
                        SOUNDEX(UPPER(p.last_name)),
-                       DAITCH_MOKOTOFF(UPPER(p.first_name)),
-                       DAITCH_MOKOTOFF(UPPER(p.last_name))
+                       COALESCE(DAITCH_MOKOTOFF(UPPER(p.first_name)), '{}'),
+                       COALESCE(DAITCH_MOKOTOFF(UPPER(p.last_name)), '{}')
                 FROM records_courtrecord p
                 WHERE p.id = ANY(%s)
             """,
@@ -222,38 +156,26 @@ def _run_unified_search(modes: list[str], first_name: str, last_name: str, date_
     }
 
 
-def _mode_sql(mode: str, first_name: str, last_name: str, enabled: bool) -> str:
-    """Return the SQL snippet for a given search mode, empty if not enabled."""
-    if not enabled:
-        return ""
+MODE_SQL_DESCRIPTIONS: dict[str, str] = {
+    "prefix": "Exact startswith match.",
+    "legacy": "Unindexed substring search.",
+    "soundex": "Phonetic code equality.",
+    "levenshtein": "Edit distance ≤ 2.",
+    "dm": "Phonetic codes for Slavic/Germanic names.",
+    "trigram": f"Character trigram KNN ranking, cut at similarity() ≥ {TRIGRAM_SIMILARITY_CUTOFF}.",
+}
+
+
+def _mode_snippets(mode: str, first_name: str, last_name: str) -> list[str]:
+    """Build the per-name display SQL snippets for one search mode."""
     fn = first_name.upper()
     ln = last_name.upper()
-    parts = []
-    if mode == "prefix":
-        if fn:
-            parts.append(f"UPPER(first_name) LIKE '{fn}%'")
-        if ln:
-            parts.append(f"UPPER(last_name) LIKE '{ln}%'")
-    elif mode == "legacy":
-        if fn:
-            parts.append(f"first_name ILIKE '%{first_name}%'")
-        if ln:
-            parts.append(f"last_name ILIKE '%{last_name}%'")
-    elif mode == "soundex":
-        if fn:
-            parts.append(f"SOUNDEX(UPPER(first_name)) = SOUNDEX('{fn}')")
-        if ln:
-            parts.append(f"SOUNDEX(UPPER(last_name)) = SOUNDEX('{ln}')")
-    elif mode == "levenshtein":
+    parts: list[str] = []
+    if mode == "levenshtein":
         if fn:
             parts.append(f"levenshtein_less_equal(UPPER(first_name), '{fn}', 2) <= 2")
         if ln:
             parts.append(f"levenshtein_less_equal(UPPER(last_name), '{ln}', 2) <= 2")
-    elif mode == "dm":
-        if fn:
-            parts.append(f"DAITCH_MOKOTOFF(UPPER(first_name)) && DAITCH_MOKOTOFF('{fn}')")
-        if ln:
-            parts.append(f"DAITCH_MOKOTOFF(UPPER(last_name)) && DAITCH_MOKOTOFF('{ln}')")
     elif mode == "trigram":
         if fn:
             parts.append(f"similarity(first_name, '{first_name}') >= {TRIGRAM_SIMILARITY_CUTOFF}")
@@ -265,18 +187,28 @@ def _mode_sql(mode: str, first_name: str, last_name: str, enabled: bool) -> str:
             parts.append(f"ORDER BY (last_name <-> '{last_name}')")
         elif fn:
             parts.append(f"ORDER BY (first_name <-> '{first_name}')")
-    sql = " AND ".join(parts) if parts else ""
-    if not sql:
+    else:
+        # prefix/legacy/soundex/dm: render the actual search templates from
+        # records/models.py (same-app import) so the display can't drift
+        # from the SQL search_unified() really runs.
+        entry = _MATCH_SOURCE_MODES.get(mode)
+        if entry:
+            _, template, make_param = entry
+            for field, value in (("first_name", first_name), ("last_name", last_name)):
+                if value:
+                    parts.append(template.format(field=field).replace("%s", f"'{make_param(value)}'"))
+    return parts
+
+
+def _mode_sql(mode: str, first_name: str, last_name: str, enabled: bool) -> str:
+    """Return the SQL snippet for a given search mode, empty if not enabled."""
+    if not enabled:
         return ""
-    desc = {
-        "prefix": "Exact startswith match.",
-        "legacy": "Unindexed substring search.",
-        "soundex": "Phonetic code equality.",
-        "levenshtein": "Edit distance ≤ 2.",
-        "dm": "Phonetic codes for Slavic/Germanic names.",
-        "trigram": f"Character trigram KNN ranking, cut at similarity() ≥ {TRIGRAM_SIMILARITY_CUTOFF}.",
-    }
-    return f"{desc.get(mode, '')} {sql}".strip()
+    parts = _mode_snippets(mode, first_name, last_name)
+    if not parts:
+        return ""
+    sql = " AND ".join(parts)
+    return f"{MODE_SQL_DESCRIPTIONS.get(mode, '')} {sql}".strip()
 
 
 def _get_phonetic_codes(first_name: str, last_name: str) -> dict:
@@ -333,12 +265,15 @@ def _phonetic_tooltips(first_name: str, last_name: str, codes: dict, mode_sql: d
 
 def _search_response(request: HttpRequest) -> HttpResponse:
     """Build the search context and render templates."""
-    enabled_modes = _get_enabled_modes(request)
-
-    first_name = request.GET.get("first_name", "").strip()
-    last_name = request.GET.get("last_name", "").strip()
-    date_of_birth = parse_date(request.GET.get("date_of_birth", "").strip())
-    sort_param = request.GET.get("sort", "")
+    # Parse-only form: is_valid() is effectively always True (see
+    # records/forms.py); it is called only to populate cleaned_data.
+    form = SearchForm(request.GET)
+    form.is_valid()
+    enabled_modes = form.cleaned_data["modes"]
+    first_name = form.cleaned_data["first_name"]
+    last_name = form.cleaned_data["last_name"]
+    date_of_birth = form.cleaned_data["date_of_birth"]
+    sort_param = form.cleaned_data["sort"]
 
     context = _run_unified_search(enabled_modes, first_name, last_name, date_of_birth, sort_param)
     context["sort"] = sort_param
@@ -381,8 +316,11 @@ def help_page(request: HttpRequest) -> HttpResponse:
     # ?refresh=1 bypasses the cache for fresh examples. With cache.add
     # (see _get_help_examples), two simultaneous refreshes both compute
     # but only one wins the add — the other's result is discarded, which
-    # is fine for a human-paced button.
-    if request.GET.get("refresh"):
+    # is fine for a human-paced button. Any non-empty value busts the
+    # cache (truthiness, not a boolean — see RefreshForm).
+    form = RefreshForm(request.GET)
+    form.is_valid()
+    if form.cleaned_data["refresh"]:
         cache.delete("help_examples")
     return TemplateResponse(request, "records/help.html", {"examples": _get_help_examples()})
 
@@ -419,18 +357,17 @@ def _soundex_variant(last_name: str) -> str:
     return last_name
 
 
-def _generate_help_examples() -> dict:
-    """Generate dynamic examples for the help page."""
-    from datetime import date
+def _sample_candidate_dobs() -> list[date]:
+    """Sample up to 100 distinct candidate DOBs without a full-table sort (B5).
 
-    # Pick a random DOB that gives us 5-20 results, without sorting the
-    # whole table (B5). TABLESAMPLE SYSTEM takes a PERCENT (0-100), so
-    # 0.01 = 0.01% of pages: on the 54M-row demo table (~720K pages) that
-    # is ~5,400 rows / ~700 distinct DOBs in ~2ms — O(sample), not the
-    # old O(n log n) ORDER BY RANDOM() full-table sort. A few attempts
-    # top up the candidate list; only when the table is too small for
-    # the page sample to yield 100 distinct DOBs (dev/tests) do we fall
-    # back to ORDER BY RANDOM(), which is cheap at that size.
+    TABLESAMPLE SYSTEM takes a PERCENT (0-100), so 0.01 = 0.01% of pages:
+    on the 54M-row demo table (~720K pages) that is ~5,400 rows / ~700
+    distinct DOBs in ~2ms — O(sample), not the old O(n log n) ORDER BY
+    RANDOM() full-table sort. A few attempts top up the candidate list; only
+    when the table is too small for the page sample to yield 100 distinct
+    DOBs (dev/tests) do we fall back to ORDER BY RANDOM(), which is cheap at
+    that size.
+    """
     sampled_dobs: list[date] = []
     seen_dobs = set()
     with connection.cursor() as c:
@@ -453,30 +390,32 @@ def _generate_help_examples() -> dict:
                 if d not in seen_dobs:
                     seen_dobs.add(d)
                     sampled_dobs.append(d)
+    return sampled_dobs
 
-        # Count every candidate DOB in one aggregate instead of one
-        # COUNT(*) per DOB: a single round trip with a <=100-date IN list.
-        dob = None
-        if sampled_dobs:
-            placeholders = ", ".join(["%s"] * len(sampled_dobs))
-            c.execute(
-                "SELECT date_of_birth, COUNT(*) FROM records_courtrecord "
-                f"WHERE date_of_birth IN ({placeholders}) GROUP BY date_of_birth",
-                sampled_dobs,
-            )
-            counts = {row[0]: row[1] for row in c.fetchall()}
-            # First sampled DOB (in sample order) with a manageable count
-            # — the same selection rule as before.
-            for d in sampled_dobs:
-                count = counts.get(d)
-                if 5 <= count <= 20:
-                    dob = d
-                    break
 
-    if not dob:
-        dob = date(1990, 1, 1)
+def _pick_example_dob(dobs: list[date]) -> date | None:
+    """First sampled DOB (in sample order) with a manageable 5-20 result count."""
+    if not dobs:
+        return None
+    # Count every candidate DOB in one aggregate instead of one
+    # COUNT(*) per DOB: a single round trip with a <=100-date IN list.
+    with connection.cursor() as c:
+        placeholders = ", ".join(["%s"] * len(dobs))
+        c.execute(
+            "SELECT date_of_birth, COUNT(*) FROM records_courtrecord "
+            f"WHERE date_of_birth IN ({placeholders}) GROUP BY date_of_birth",
+            dobs,
+        )
+        counts = {row[0]: row[1] for row in c.fetchall()}
+    for d in dobs:
+        count = counts.get(d)
+        if 5 <= count <= 20:
+            return d
+    return None
 
-    # Get a sample of names for this DOB
+
+def _sample_names_for_dob(dob: date) -> list[tuple[str, str]]:
+    """Fetch a random sample of 5 (first_name, last_name) pairs for a DOB."""
     with connection.cursor() as c:
         c.execute(
             """
@@ -486,15 +425,11 @@ def _generate_help_examples() -> dict:
         """,
             [dob],
         )
-        names = c.fetchall()
+        return c.fetchall()
 
-    if not names:
-        return {"dob": dob.strftime("%Y-%m-%d"), "groups": []}
 
-    # Pick one name as the base
-    base_fn, base_ln = names[0]
-    dob_str = dob.strftime("%Y-%m-%d")
-
+def _build_example_groups(base_fn: str, base_ln: str) -> list[dict]:
+    """Build the six help-page example groups around one base name."""
     # Generate typos for each group
     groups = []
 
@@ -597,16 +532,35 @@ def _generate_help_examples() -> dict:
         }
     )
 
-    return {"dob": dob_str, "groups": groups}
+    return groups
+
+
+def _generate_help_examples() -> dict:
+    """Generate dynamic examples for the help page."""
+    dob = _pick_example_dob(_sample_candidate_dobs())
+    if not dob:
+        dob = date(1990, 1, 1)
+
+    names = _sample_names_for_dob(dob)
+    if not names:
+        return {"dob": dob.strftime("%Y-%m-%d"), "groups": []}
+
+    # Pick one name as the base
+    base_fn, base_ln = names[0]
+    return {"dob": dob.strftime("%Y-%m-%d"), "groups": _build_example_groups(base_fn, base_ln)}
 
 
 def search_explain(request: HttpRequest) -> HttpResponse:
     """EXPLAIN ANALYZE endpoint for the query search_unified() actually runs."""
-    modes = _parse_explain_modes(request)
-    first_name = request.GET.get("first_name", "").strip()
-    last_name = request.GET.get("last_name", "").strip()
-    date_of_birth = parse_date(request.GET.get("date_of_birth", "").strip())
-    sort_field = SORT_PARAMS.get(request.GET.get("sort", ""), "")
+    # Parse-only form: is_valid() is effectively always True (see
+    # records/forms.py); it is called only to populate cleaned_data.
+    form = ExplainForm(request.GET)
+    form.is_valid()
+    modes = form.cleaned_data["modes"]
+    first_name = form.cleaned_data["first_name"]
+    last_name = form.cleaned_data["last_name"]
+    date_of_birth = form.cleaned_data["date_of_birth"]
+    sort_field = SORT_PARAMS.get(form.cleaned_data["sort"], "")
 
     context = {
         "plan": None,

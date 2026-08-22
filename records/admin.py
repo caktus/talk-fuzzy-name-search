@@ -9,8 +9,8 @@ from .models import CourtRecord
 class CourtRecordAdmin(admin.ModelAdmin):
     """Admin interface for CourtRecord model."""
 
-    list_display = ("first_name", "last_name", "middle_name", "date_of_birth", "person_id")
-    list_filter = ("date_of_birth",)
+    list_display = ("pk", "first_name", "last_name", "middle_name", "date_of_birth", "person_id")
+    date_hierarchy = "date_of_birth"
     search_fields = ("first_name", "last_name", "middle_name")
     readonly_fields = ("person_id",)
     fieldsets = (

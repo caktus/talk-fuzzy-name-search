@@ -93,7 +93,7 @@ jobs:
         run: uv run pre-commit run --all-files
 
       # pytest-django creates its own test database (test_fuzzy_demo) from
-      # scratch, proving the full 0001-0007 migration chain including
+      # scratch, proving the full 0001-0004 migration chain including
       # CREATE EXTENSION fuzzystrmatch/pg_trgm, then runs the whole suite.
       # The suite needs NO external data: the full-pipeline seed_data tests
       # substitute small synthetic name-frequency CSVs.
