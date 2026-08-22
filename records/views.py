@@ -14,8 +14,8 @@ from django.core.cache import cache
 from django.db import connection
 from django.http import HttpRequest, HttpResponse
 from django.template.response import TemplateResponse
-from django.utils.dateparse import parse_date
 
+from .forms import BASE_MODES, SEARCH_MODES, ExplainForm, RefreshForm, SearchForm
 from .models import (
     _MATCH_SOURCE_MODES,
     MATCH_SOURCE_BITS,
@@ -40,61 +40,6 @@ def _cached_total_records() -> int:
         count = CourtRecord.objects.count()
         cache.set(_TOTAL_RECORDS_CACHE_KEY, count, _TOTAL_RECORDS_CACHE_SECONDS)
     return count
-
-
-# Search modes, each independently toggleable via checkboxes.
-SEARCH_MODES = {
-    "prefix": {
-        "label": "Exact prefix",
-        "description": "B-tree indexed istartswith — fast type-ahead, exact spelling.",
-        "default": True,
-    },
-    "soundex": {
-        "label": "Soundex",
-        "description": "Phonetic pre-filter using SOUNDEX codes.",
-        "default": False,
-    },
-    "levenshtein": {
-        "label": "Levenshtein",
-        "description": "Edit distance ≤ 2 — precision filter applied on top of other modes.",
-        "default": False,
-    },
-    "dm": {
-        "label": "Daitch-Mokotoff",
-        "description": "Phonetic codes with stronger Slavic/Germanic coverage.",
-        "default": False,
-    },
-    "trigram": {
-        "label": "Trigram",
-        "description": f"pg_trgm KNN ranking, cut at similarity() ≥ {TRIGRAM_SIMILARITY_CUTOFF} per name.",
-        "default": False,
-    },
-    "legacy": {
-        "label": "Legacy LIKE",
-        "description": "Unindexed LIKE '%name%' — slow, included for comparison.",
-        "default": False,
-    },
-}
-
-DEFAULT_MODES = [k for k, v in SEARCH_MODES.items() if v["default"]]
-
-# Base modes that Levenshtein can refine. Levenshtein is a precision filter
-# on top of base modes, not a standalone search: with no base mode enabled
-# the UI disables the Levenshtein checkbox and search_unified() returns no
-# rows for a name query (see B1/B13).
-BASE_MODES = ["prefix", "legacy", "soundex", "dm", "trigram"]
-
-
-def _parse_explain_modes(request: HttpRequest) -> list[str]:
-    """Parse the explain mode list from ?modes=a,b (or legacy ?mode=a).
-
-    Unknown mode names are dropped; if nothing valid remains (or no mode was
-    given at all) fall back to ["prefix"] — the previous single-mode behavior.
-    """
-    modes_param = request.GET.get("modes") or request.GET.get("mode", "")
-    tokens = [t.strip() for t in modes_param.split(",") if t.strip()]
-    valid = [t for t in tokens if t in SEARCH_MODES]
-    return valid if valid else ["prefix"]
 
 
 def _explain_queryset_for(modes: list[str], first_name: str, last_name: str, date_of_birth=None, sort_field=""):
@@ -136,28 +81,8 @@ def _explain_queryset_for(modes: list[str], first_name: str, last_name: str, dat
     return qs[:100], "main"
 
 
-def _get_enabled_modes(request: HttpRequest) -> list[str]:
-    """Get enabled search modes from request."""
-    modes_param = request.GET.get("modes", "")
-    if modes_param:
-        enabled = [m for m in modes_param.split(",") if m in SEARCH_MODES]
-    else:
-        enabled = list(DEFAULT_MODES)
-    return enabled if enabled else list(DEFAULT_MODES)
-
-
 # Values for the ?sort= URL parameter on the results table headers.
 SORT_PARAMS = {"dob_asc": "date_of_birth", "dob_desc": "-date_of_birth"}
-
-
-def _search_params(request: HttpRequest) -> dict:
-    """Parse the GET params shared by the search and EXPLAIN views."""
-    return {
-        "first_name": request.GET.get("first_name", "").strip(),
-        "last_name": request.GET.get("last_name", "").strip(),
-        "date_of_birth": parse_date(request.GET.get("date_of_birth", "").strip()),
-        "sort": request.GET.get("sort", ""),
-    }
 
 
 def _run_unified_search(modes: list[str], first_name: str, last_name: str, date_of_birth=None, sort_param="") -> dict:
@@ -340,13 +265,15 @@ def _phonetic_tooltips(first_name: str, last_name: str, codes: dict, mode_sql: d
 
 def _search_response(request: HttpRequest) -> HttpResponse:
     """Build the search context and render templates."""
-    enabled_modes = _get_enabled_modes(request)
-
-    params = _search_params(request)
-    first_name = params["first_name"]
-    last_name = params["last_name"]
-    date_of_birth = params["date_of_birth"]
-    sort_param = params["sort"]
+    # Parse-only form: is_valid() is effectively always True (see
+    # records/forms.py); it is called only to populate cleaned_data.
+    form = SearchForm(request.GET)
+    form.is_valid()
+    enabled_modes = form.cleaned_data["modes"]
+    first_name = form.cleaned_data["first_name"]
+    last_name = form.cleaned_data["last_name"]
+    date_of_birth = form.cleaned_data["date_of_birth"]
+    sort_param = form.cleaned_data["sort"]
 
     context = _run_unified_search(enabled_modes, first_name, last_name, date_of_birth, sort_param)
     context["sort"] = sort_param
@@ -389,8 +316,11 @@ def help_page(request: HttpRequest) -> HttpResponse:
     # ?refresh=1 bypasses the cache for fresh examples. With cache.add
     # (see _get_help_examples), two simultaneous refreshes both compute
     # but only one wins the add — the other's result is discarded, which
-    # is fine for a human-paced button.
-    if request.GET.get("refresh"):
+    # is fine for a human-paced button. Any non-empty value busts the
+    # cache (truthiness, not a boolean — see RefreshForm).
+    form = RefreshForm(request.GET)
+    form.is_valid()
+    if form.cleaned_data["refresh"]:
         cache.delete("help_examples")
     return TemplateResponse(request, "records/help.html", {"examples": _get_help_examples()})
 
@@ -622,12 +552,15 @@ def _generate_help_examples() -> dict:
 
 def search_explain(request: HttpRequest) -> HttpResponse:
     """EXPLAIN ANALYZE endpoint for the query search_unified() actually runs."""
-    modes = _parse_explain_modes(request)
-    params = _search_params(request)
-    first_name = params["first_name"]
-    last_name = params["last_name"]
-    date_of_birth = params["date_of_birth"]
-    sort_field = SORT_PARAMS.get(params["sort"], "")
+    # Parse-only form: is_valid() is effectively always True (see
+    # records/forms.py); it is called only to populate cleaned_data.
+    form = ExplainForm(request.GET)
+    form.is_valid()
+    modes = form.cleaned_data["modes"]
+    first_name = form.cleaned_data["first_name"]
+    last_name = form.cleaned_data["last_name"]
+    date_of_birth = form.cleaned_data["date_of_birth"]
+    sort_field = SORT_PARAMS.get(form.cleaned_data["sort"], "")
 
     context = {
         "plan": None,
