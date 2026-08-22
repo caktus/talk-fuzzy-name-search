@@ -10,7 +10,6 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
-import os
 from pathlib import Path
 
 import environ
@@ -148,71 +147,3 @@ DEBUG_TOOLBAR_CONFIG = {
     "SHOW_TEMPLATE_CONTEXT": True,
     "ENABLE_STACKTRACES": True,
 }
-
-
-# =============================================================================
-# Kind (Kubernetes) settings
-# =============================================================================
-# Applied only when ON_KIND / ON_KIND_SETUP is set. ON_KIND_SETUP is set by
-# the Dockerfile for build-time collectstatic; ON_KIND is set by the helm
-# configmap at runtime. The runtime env contract (helm configmap/secret):
-# DEBUG (parsed once at the top of this file), DJANGO_ALLOWED_HOSTS,
-# DJANGO_SECRET_KEY, APP_HOSTNAME, and either a DATABASE_URL connection
-# string or the individual DB_NAME/DB_USER/DB_PASSWORD/DB_HOST/DB_PORT vars.
-# =============================================================================
-
-if os.environ.get("ON_KIND_SETUP") or os.environ.get("ON_KIND"):
-    # Static files (needed during Docker build and at runtime)
-    STATIC_ROOT = os.path.join(BASE_DIR, "staticfiles")
-    STATIC_URL = "/static/"
-    try:
-        STATICFILES_DIRS.append(os.path.join(BASE_DIR, "static"))
-    except NameError:
-        STATICFILES_DIRS = [os.path.join(BASE_DIR, "static")]
-
-    # WhiteNoise for static files (lightweight, no Redis needed)
-    i = MIDDLEWARE.index("django.middleware.security.SecurityMiddleware")
-    MIDDLEWARE.insert(i + 1, "whitenoise.middleware.WhiteNoiseMiddleware")
-    WHITENOISE_USE_FINDERS = True
-
-    # Remove debug toolbar in production
-    if "debug_toolbar" in INSTALLED_APPS:
-        INSTALLED_APPS.remove("debug_toolbar")
-    if "debug_toolbar.middleware.DebugToolbarMiddleware" in MIDDLEWARE:
-        MIDDLEWARE.remove("debug_toolbar.middleware.DebugToolbarMiddleware")
-    # Remove deployment plugin (not needed in the container)
-    if "django_simple_deploy" in INSTALLED_APPS:
-        INSTALLED_APPS.remove("django_simple_deploy")
-
-if os.environ.get("ON_KIND"):
-    # Security settings
-    SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", SECRET_KEY)
-
-    # DEBUG is intentionally NOT re-parsed here: the single parse at the top
-    # of this file (env("DEBUG"), bool with default True) is the only one.
-
-    # Allowed hosts
-    hostname = os.environ.get("DJANGO_ALLOWED_HOSTS", "*")
-    ALLOWED_HOSTS = [h.strip() for h in hostname.split(",")]
-
-    # Database: use the DATABASE_URL connection string (psycopg3 format,
-    # e.g. postgresql://user:pass@host:5432/db) when present, else fall back
-    # to the individual DB_* variables. Same defaults as before.
-    db_url = os.environ.get("DATABASE_URL")
-    if db_url:
-        DATABASES["default"] = env.db_url_config(db_url)
-    else:
-        DATABASES["default"] = {
-            "ENGINE": "django.db.backends.postgresql",
-            "NAME": os.environ.get("DB_NAME", "fuzzy_demo"),
-            "USER": os.environ.get("DB_USER", "fuzzy_demo"),
-            "PASSWORD": os.environ.get("DB_PASSWORD", ""),
-            "HOST": os.environ.get("DB_HOST", "localhost"),
-            "PORT": os.environ.get("DB_PORT", "5432"),
-        }
-
-    # CSRF trusted origins (for HTTPS ingress)
-    CSRF_TRUSTED_ORIGINS = [
-        f"http://{os.environ.get('APP_HOSTNAME', 'localhost')}",
-        f"https://{os.environ.get('APP_HOSTNAME', 'localhost')}",
-    ]
