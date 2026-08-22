@@ -94,8 +94,13 @@ uv run python manage.py seed_data --count 100000 --flush --seed 42 --as-of 2026-
 
 # DEBUG=False time uv run python manage.py seed_data --count 54000000 --flush --seed 42 --as-of 2026-01-01
 
-# Re-run the subsequent migrations to add indexes
+# Add non-gist indexes
+# ~5 min on MBP M3 Max w/ 54M records
+# ~2.5 min on Linux VM
 time uv run python manage.py migrate records 0003
+# Add gist index (slow)
+# ~20 min on MBP M3 Max w/ 54M records)
+# ~14 min on Linux VM
 time uv run python manage.py migrate records 0004
 
 # Run
