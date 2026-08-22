@@ -7,7 +7,7 @@ source .venv/bin/activate
 /home/django_user/.local/bin/uv pip install -r requirements.txt
 
 # # Set env vars.
-export DEBUG=TRUE
+export DEBUG=FALSE
 export ON_DIGITALOCEAN=1
 
 # Migrate, and run collectstatic.
