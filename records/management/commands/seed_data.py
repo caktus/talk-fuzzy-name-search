@@ -12,7 +12,7 @@ Distribution model:
        name_dataset/us_surnames.csv (columns surname,gender,count),
        downloaded by name_dataset/download_name_data.py (see README). Gender
        rows are summed
-       together (Person has no gender field), names are uppercased and deduped,
+       together (CourtRecord has no gender field), names are uppercased and deduped,
        and each name's raw `count` is used directly as its sampling weight.
     2. Name sampling: first_name and last_name are drawn INDEPENDENTLY per
        identity, each proportional to its Census/SSA count (precomputed
@@ -72,7 +72,7 @@ from records.phonetics import NICKNAME_MAP
 NAME_DATASET_DIR = Path(__file__).resolve().parents[3] / "name_dataset"
 FORENAMES_CSV = NAME_DATASET_DIR / "us_forenames.csv"
 SURNAMES_CSV = NAME_DATASET_DIR / "us_surnames.csv"
-# Person.first_name / last_name are CharField(max_length=50); longer dataset
+# CourtRecord.first_name / last_name are CharField(max_length=50); longer dataset
 # entries (a handful of names with combining-mark runs) are dropped at load.
 MAX_NAME_LENGTH = 50
 
@@ -269,9 +269,9 @@ class Command(BaseCommand):
 
         The file has columns ``<name_column>,gender,count`` where ``count`` is
         the raw Census/SSA occurrence count for that name. Gender rows are
-        summed together (Person has no gender field), names are uppercased
+        summed together (CourtRecord has no gender field), names are uppercased
         and deduped, and names longer than MAX_NAME_LENGTH characters are
-        dropped (Person.first_name/last_name are CharField(max_length=50)).
+        dropped (CourtRecord.first_name/last_name are CharField(max_length=50)).
 
         Returns ``names`` (a str ndarray, sorted by count descending, ties by
         name — stable ordering makes the sampled output deterministic for a

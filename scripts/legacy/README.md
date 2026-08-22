@@ -7,5 +7,5 @@ NOT part of the current onboarding path (see the README Quick Start).
 
 Do not run them against the current schema: `generate_data.py` emits empty
 `dob` values for ~20% of rows, which `load_csv.py` loads as `NULL` and the
-`NOT NULL` constraint (migration 0005) rejects with an `IntegrityError`. They
+`NOT NULL` constraint (migration 0001) rejects with an `IntegrityError`. They
 also produce no `person_id` clusters.

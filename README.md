@@ -86,7 +86,7 @@ uv run python manage.py migrate records 0002
 # Create fake data
 uv run python manage.py seed_data --count 100000 --flush --seed 42 --as-of 2026-01-01
 
-# Full 54M stage dataset. Rreference runs:
+# Full 54M stage dataset. Reference runs:
 # ~100 min on a 40 GB Linux VM w/ PCIe 5.0 X4 NVME
 # ~4 hours on a 36 GB MacBook Pro M3 Max (2023)
 

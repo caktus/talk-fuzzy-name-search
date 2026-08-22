@@ -135,9 +135,9 @@ class TestTrigramVisibility:
 
     # Near-spelling variants of "Smith" that legacy (icontains) and prefix
     # (istartswith) never match, but trigram ranks close to "Smith" *and* clear
-    # the 0.4 similarity() cutoff (Smit=0.57, Smitz/Smity/Smita/Smits=0.5).
-    # (The old fixtures Smyth/Smythe/Smidt/Smyt/Smyths were all <0.4 and would be
-    # cut by the new threshold.)
+    # the 0.3 similarity() cutoff (TRIGRAM_SIMILARITY_CUTOFF) (Smit=0.57, Smitz/Smity/Smita/Smits=0.5).
+    # (The old fixtures Smyth/Smythe/Smidt/Smyt/Smyths sit around the 0.3 cutoff
+    # (0.18-0.33), so they were less reliable pins.)
     NEAR_NAMES = ["Smit", "Smitz", "Smity", "Smita", "Smits"]
 
     def _seed(self):
