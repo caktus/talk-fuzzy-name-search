@@ -1,3 +1,10 @@
+# /// script
+# requires-python = ">=3.13"
+# dependencies = [
+#     "marimo>=0.24.0",
+# ]
+# ///
+
 import marimo
 
 __generated_with = "0.24.0"
@@ -36,13 +43,18 @@ with app.setup(hide_code=True):
 def _():
     """Good afternoon, everyone. Welcome to our talk."""
     # The first slide is a title slide, so we don't need to use mo.vstack() or mo.hstack() here.
-    mo.md("""
-    # Search-as-you-type for 54 Million Names
+    mo.vstack(
+        [
+            mo.md("""
+    ## Search-as-you-type for 54 Million Names
 
-    ### PostgreSQL + Django for Fuzzy Name Matching at Scale
+    **PostgreSQL + Django for Fuzzy Name Matching at Scale**
 
-    **Caktus Group // DjangoCon US 2026**
-    """)
+    Caktus Group // DjangoCon US 2026
+    """),
+        mo.hstack([mo.md("### https://cakt.us/fuzzy-repo"),
+                   mo.image((visuals / "qr_repo.png").absolute(), width="25%")])
+        ])
     return
 
 
@@ -340,16 +352,7 @@ def _():
             mo.md("""
         # The portal's "sounds like" search
         """),
-            mo.md("""
-        ### 📸 Insert screenshot here
-
-        State portal "sounds like" results for one name — 200+ hits, mostly
-        false positives.
-
-        **To insert:** save the screenshot as `visuals/portal-soundslike.png`,
-        then replace this placeholder with
-        `mo.image((visuals / "portal-soundslike.png").absolute(), width="100%")`.
-        """),
+            mo.image((visuals / "sounds_like.png").absolute(), width="100%")
         ]
     )
     return
@@ -497,34 +500,6 @@ def _():
 @app.cell
 def _():
     """
-    Where does all this court data come from?
-
-    The production system searches 54 million+ real North Carolina court
-    records. We purchased that data from the state's courts -- the NC Courts
-    Remote Public Access Program (RPA extract access) -- the same public
-    channel attorneys already use to pull records. Keep it plain context:
-    no schemas, batch windows, or fee details.
-    """
-    mo.vstack(
-        [
-            mo.md("# Where the data comes from"),
-            mo.md("""
-    The system searches **54 million+ real North Carolina court records**.
-
-    We **purchased** that data from the state's courts -- the **NC Courts
-    Remote Public Access Program (RPA extract access)** -- the same public
-    channel attorneys use to pull records.
-
-    [NC Courts RPA extract access](https://www.nccourts.gov/services/remote-public-access-program/rpa-extract-access)
-    """),
-        ]
-    )
-    return
-
-
-@app.cell
-def _():
-    """
     Why is the demo data simulated?
 
     We can't show real people's names in a public talk -- that's private,
@@ -536,22 +511,13 @@ def _():
     """
     mo.vstack(
         [
-            mo.md("# Why the demo data is simulated"),
+            mo.md("# Generating fake data"),
             mo.md("""
-    We can't show real people's names in a public talk -- that's private,
-    sensitive information.
+    This demo runs on a **simulated 54M-record dataset**:
 
-    So this demo runs on a **simulated 54M-record dataset**, not real records.
-
-    A **deterministic generator** builds it: same seed -> same data, exactly
-    reproducible. It mirrors the *shape* of the real data:
-
-    - a **heavy-tailed** name distribution -- a few very common names, a long
-      tail of rare ones
-    - the same **duplication** pattern -- one person appears across several
-      slightly-different records (typos, nicknames, aliases)
-
-    None of it is a real person.
+    ```bash
+    DEBUG=False time uv run python manage.py seed_data --count 54000000 ...
+    ```
     """),
         ]
     )
@@ -561,43 +527,6 @@ def _():
 @app.cell
 def _():
     # Exploring our Demo DB
-    return
-
-
-@app.cell(hide_code=True)
-def _():
-    """
-    Key conceptual point — slow down and make it explicit.
-
-    What we search is NOT a clean, unified "Person" table. It is a pile of
-    raw court records. Every time a person's name gets entered into the
-    courts — different county, different clerk, different year — a new row is
-    created. So the same real person shows up across many duplicated records,
-    often with typos, nicknames, and aliases.
-
-    That duplication is exactly why the search is hard: "Amanda Morgan" is
-    not one row we look up; it is a cluster of rows we have to find and
-    de-duplicate. We model each row as a CourtRecord, not a Person, on
-    purpose — the name is a reminder that these are raw captures, not a
-    canonical identity.
-    """
-    mo.vstack(
-        [
-            mo.md("# What a “record” actually is"),
-            mo.md("""
-    We do **not** search a unified *Person* table. We search **raw court
-    records** — one row per appearance of a person in the courts.
-
-    The same real person shows up across **many duplicated records**: different
-    counties, clerks, years, typos, nicknames, and aliases. So **one person →
-    many rows**, and a name like *Amanda Morgan* is a *cluster* of rows we must
-    find and de-duplicate — not a single row.
-
-    Each row is modeled as a **`CourtRecord`** (not `Person`) on purpose: the
-    name is a reminder that these are raw captures, not a canonical identity.
-    """),
-        ]
-    )
     return
 
 
@@ -648,11 +577,11 @@ def qs_to_df(qs, cols=None):
 def _():
     qs_to_df(
         CourtRecord.objects.filter(
-            first_name__iexact="amanda",
-            last_name__iexact="morgan",
+            first_name__iexact="sonya",
+            last_name__iexact="resyes",
         )[:1000]
     )
-    # All persons named "Amanda Morgan" (646 rows, 389 unique persons)
+    # All persons named "Sonya Resyes" (14 rows)
     return
 
 
@@ -660,19 +589,20 @@ def _():
 def _():
     qs_to_df(
         CourtRecord.objects.filter(
-            first_name__icontains="amanda",
-            last_name__icontains="morgan",
-            date_of_birth="1993-10-02",
+            first_name__icontains="Sonya",
+            last_name__icontains="Resyes",
+            date_of_birth="1961-05-24",
         )[:100]
     )
-    # Five (5) records for Amanda Morgan born 1993-10-02
+    # Fourteen (14) records for Sonya Resyes born May 24, 1961 (one person)
     return
 
 
 @app.cell
 def _():
-    qs_to_df(CourtRecord.objects.filter(person_id="d2a81060-fde2-8f0b-71ba-aa32e474a46b")[:100])
-    # Filtering by person_id, one additional row for "AMAANDA" is found
+    qs_to_df(CourtRecord.objects.filter(person_id="b211d9a1-571f-ac92-1d95-ca235b6f1753")[:100])
+    # Filtering by person_id, four (4) additional rows are found
+    # Typos include: SONAY, SONY, SONA, and RESEYS
     return
 
 
@@ -685,10 +615,10 @@ def _():
         FROM
             records_courtrecord
         WHERE
-            LOWER(first_name) LIKE '%am%nda%'
-            AND LOWER(last_name) LIKE '%morgan%'
-            AND date_of_birth = '1993-10-02'
-            -- A wildcard in place of the double 'a' finds the row, but is impractical
+            LOWER(first_name) LIKE 'son%'
+            AND LOWER(last_name) LIKE '%resy%'
+            AND date_of_birth = '1961-05-24'
+            -- Wildcards can almost find it, but only capture 17 of the 18 rows
         """,
         engine=engine
     )
@@ -710,20 +640,20 @@ def _():
     _df = mo.sql(
         f"""
         SELECT
-            soundex ('Amanda') AS amanda,
+            soundex ('Sonya') AS sonya,
             -- Vowel Swaps (Vowels are ignored after the first letter)
-            soundex ('Aminda') AS aminda,
-            soundex ('Amenda') AS amenda,
+            soundex ('Sania') AS sania,
+            soundex ('Senya') AS senya,
             -- Extra or Silent Letters (H, W, and trailing vowels are ignored)
-            soundex ('Ahmanda') AS ahmanda,
-            soundex ('Amandie') AS amandie,
+            soundex ('Sohnya') AS sohnya,
+            soundex ('Soniah') AS soniah,
             -- Consonant Doubles (Consecutive identical Soundex numbers merge)
-            soundex ('Ammanda') AS ammanda,
-            soundex ('Amannda') AS amannda,
-            -- Phonetic Consonant Swaps ('D' and 'T' both map to the number 3)
-            soundex ('Amanta') AS amanta,
-            soundex ('Amantha') AS amantha,
-            soundex ('Amentha') AS amentha;
+            soundex ('Sonnya') AS sonnya,
+            soundex ('Sonnia') AS sonnia,
+            -- Phonetic Consonant Swaps ('M' and 'N' both map to the number 5)
+            soundex ('Somya') AS somya,
+            soundex ('Somia') AS somia,
+            soundex ('Somiya') AS somiya;
         """,
         engine=engine
     )
@@ -739,10 +669,10 @@ def _():
         FROM
             records_courtrecord
         WHERE
-            soundex (first_name) = soundex ('amanda')
-            AND LOWER(last_name) LIKE '%morgan%'
-            AND date_of_birth = '1993-10-02'
-            -- A soundex() test on first_name finds the typo
+            soundex (first_name) = soundex ('sonya')
+            AND soundex (last_name) = soundex ('resyes')
+            AND date_of_birth = '1961-05-24'
+            -- A soundex() finds the typos (18 rows)
         """,
         engine=engine
     )
@@ -758,11 +688,10 @@ def _():
         FROM
             records_courtrecord
         WHERE
-            soundex (first_name) = soundex ('amanda')
-            AND soundex (last_name) = soundex ('morgan')
-            AND lower(last_name) != 'morgan'
+            soundex (last_name) = soundex ('resyes')
+        LIMIT 10
 
-        -- A soundex-only search returns false positives, e.g., "MORRISON" instead of "MORGAN"
+        -- A soundex-only search returns false positives, e.g., "ROSAS" instead of "RESYES"
         """,
         engine=engine
     )
@@ -813,9 +742,9 @@ def _():
     _df = mo.sql(
         f"""
         SELECT
-            soundex ('morgan') as soundex_morgan,
-            soundex ('morrison') as soundex_morrison,
-            levenshtein ('morgan', 'morrison');
+            soundex ('resyes') as soundex_resyes,
+            soundex ('rosas') as soundex_rosas,
+            levenshtein ('resyes', 'rosas');
 
         -- soundex codes match, but have a Levenshtein distance of '4'
         """,
@@ -836,10 +765,9 @@ def _():
     precision filter uses levenshtein_less_equal.
     """
     mo.md(r"""
-    ## `levenshtein()` vs `levenshtein_less_equal()`
+    ### `levenshtein_less_equal()`
 
-    Both answer "how many edits apart are these names?" -- but only one knows
-    when to stop.
+    For an efficient gain, use `levenshtein_less_equal()` instead of `levenshtein()`:
 
     ```sql
     -- always computes the FULL edit distance, even when it's obviously large
@@ -848,24 +776,6 @@ def _():
     -- bails out the moment the distance exceeds 2, returning a value > 2
     SELECT levenshtein_less_equal(last_name, 'SMYTH', 2);
     ```
-
-    `levenshtein(a, b)` does the complete dynamic-programming work for every
-    pair. `levenshtein_less_equal(a, b, max)` stops early once the distance is
-    known to be bigger than `max` -- so for a small constraint like "<= 2",
-    nearly every non-match is rejected after a few operations instead of a full
-    pass. **Same matching rows, less CPU.**
-
-    **Measured on 1,000,000 sampled last names** -- same 979 rows for 'SMYTH':
-
-    | target (len)         | `levenshtein() <= 2` | `levenshtein_less_equal(..., 2) <= 2` |
-    | -------------------- | -------------------- | -------------------------------------- |
-    | `SMYTH` (5)          | ~ 31 ms          | ~ 27 ms (~15% faster)               |
-    | `CHARLOTTE` (9)      | ~ 40 ms          | ~ 25 ms (~1.6x faster)           |
-
-    The gap widens as names get longer or more different -- the early exit
-    doing its job. In the app this runs as a precision filter on top of an
-    indexed phonetic pre-filter, so it only sees the small survivor set, not
-    all 54M rows.
     """)
     return
 
@@ -907,37 +817,10 @@ def _():
 @app.cell(hide_code=True)
 def _():
     """
-    The Django-side payoff: the raw SQL functions become normal ORM querysets.
-    We wrap each PostgreSQL function as a tiny custom `Func` expression (the
-    function name plus its output field), and Django renders the SQL for us.
-    Trigrams are already built into Django; the other three are two-line
-    wrappers we add ourselves. All the code in these slides is verbatim from
-    the companion blog post, which uses `Person` as a stand-in for "your
-    model"; in this repo that model is `CourtRecord` (renamed from `Person`),
-    and every snippet below was run here against `CourtRecord`.
-    """
-    mo.md(r"""
-    # From raw SQL to the Django ORM
-
-    Wrap each PostgreSQL function as a tiny custom `Func` expression, then use
-    it in a normal queryset. Trigrams are **already built into Django**; the
-    other three are two-line wrappers we add.
-
-    > The code below is verbatim from the companion blog post, which uses
-    > `Person` as a stand-in for "your model". In this repo that model is
-    > **`CourtRecord`**; each snippet was run here against `CourtRecord`.
-    """)
-    return
-
-
-@app.cell(hide_code=True)
-def _():
-    """
     These three live in records/expressions.py. Each is a two-line Func
     subclass: the SQL function name and the field it returns. That's the entire
-    abstraction -- Django renders SOUNDEX(...), DAITCH_MOKOTOFF(...), and
-    levenshtein_less_equal(...) straight into the query. Trigrams need no
-    wrapper: django.contrib.postgres.search ships them.
+    abstraction -- Django renders soundex(...), daitch_mokotoff(...), and
+    levenshtein_less_equal(...) straight into the query.
     """
     mo.md(r"""
     ```python
@@ -947,24 +830,18 @@ def _():
 
 
     class Soundex(Func):
-        function = "SOUNDEX"
+        function = "soundex"
         output_field = CharField()
 
 
     class DaitchMokotoff(Func):
-        function = "DAITCH_MOKOTOFF"
+        function = "daitch_mokotoff"
         output_field = ArrayField(TextField())
 
 
     class LevenshteinLessEqual(Func):
         function = "levenshtein_less_equal"
         output_field = IntegerField()
-    ```
-
-    Trigrams are Django built-ins -- nothing to write:
-
-    ```python
-    from django.contrib.postgres.search import TrigramSimilarity, TrigramDistance
     ```
     """)
     return
@@ -980,7 +857,7 @@ def _():
     the 54M demo -- the measured row counts are under each example.
     """
     mo.md(r"""
-    **Soundex** -- group names by the code they sound like:
+    ## Using a function in the Django ORM
 
     ```python
     from django.db.models import F, Value
@@ -988,47 +865,10 @@ def _():
     from .expressions import Soundex
 
     CourtRecord.objects.annotate(
-        last_sdx=Soundex(Upper(F("last_name")))
+        last_sdx=Soundex(F("last_name"))
     ).filter(last_sdx=Soundex(Value("Smyth")))
     # matches Smith, Smyth, Smythe, and Smidt -- all code S530
     ```
-    *Verified against `CourtRecord` in the 54M demo: 161,296 rows.*
-
-    **Daitch-Mokotoff** -- match on overlapping code arrays (`__overlap` is the `&&`):
-
-    ```python
-    from .expressions import DaitchMokotoff
-
-    CourtRecord.objects.annotate(
-        last_dm=DaitchMokotoff(Upper(F("last_name")))
-    ).filter(last_dm__overlap=["740000"])
-    # matches both Weiss and Weiß, which share code 740000
-    ```
-    *Verified against `CourtRecord` in the 54M demo: 487,874 rows.*
-
-    **Levenshtein** -- a precision filter on top of the broader matches:
-
-    ```python
-    from .expressions import LevenshteinLessEqual
-
-    CourtRecord.objects.annotate(
-        last_dist=LevenshteinLessEqual(Upper(F("last_name")), Value("SMYTH"), Value(2))
-    ).filter(last_dist__lte=2)
-    # keeps Smith (1), Smyth (0), Smythe (1); drops anything farther
-    ```
-    *Verified against `CourtRecord` in the 54M demo: 53,922 rows.*
-
-    **Trigrams** -- rank by closeness, take the top N:
-
-    ```python
-    from django.contrib.postgres.search import TrigramDistance
-
-    CourtRecord.objects.annotate(
-        last_dist=TrigramDistance(F("last_name"), Value("Smith"))
-    ).order_by("last_dist")[:20]
-    # the 20 closest last names to "Smith"
-    ```
-    *Verified against `CourtRecord` in the 54M demo: returns the 20 closest rows.*
     """)
     return
 
@@ -1045,27 +885,46 @@ def _():
 
 @app.cell
 def _():
-    _df = mo.sql(
-        f"""
-        SELECT
-            *
-        FROM
-            records_courtrecord
-        WHERE
-            -- Find similar-sounding first and last names
-            daitch_mokotoff (upper(first_name)) && daitch_mokotoff ('AMANDA')
-            AND daitch_mokotoff (upper(last_name)) && daitch_mokotoff ('MORGAN')
-            -- Allow up to two character differences
-            -- AND levenshtein (upper(first_name), 'AMANDA') <= 2
-            -- AND levenshtein (last_name, 'MORGAN') <=2
-            AND levenshtein_less_equal (upper(first_name), 'AMANDA', 2) <= 2
-            AND levenshtein_less_equal (last_name, 'MORGAN', 2) <= 2
-            -- Exclude exact matches to make typos more visible
-            --AND last_name != 'MORGAN'
-            -- With this (indexed) query we can find 11 similar typos in 54,000,000 rows in <40ms!
-            -- Postgres is amazing :)
-        """,
-        engine=engine
+    from django.contrib.postgres.fields import ArrayField
+    from django.db.models.expressions import Func, Value
+    from django.db.models.functions import Upper
+    from django.db.models.fields import CharField, IntegerField
+
+    class Soundex(Func):
+        function = "soundex"
+        output_field = CharField()
+
+
+    class DaitchMokotoff(Func):
+        function = "daitch_mokotoff"
+        output_field = ArrayField(TextField())
+
+
+    class LevenshteinLessEqual(Func):
+        function = "levenshtein_less_equal"
+        output_field = IntegerField()
+
+    return DaitchMokotoff, LevenshteinLessEqual, Upper, Value
+
+
+@app.cell
+def _(DaitchMokotoff, LevenshteinLessEqual, Upper, Value):
+    qs_to_df(
+        CourtRecord.objects.annotate(
+            first_name_dm=DaitchMokotoff("first_name"),
+            last_name_dm=DaitchMokotoff("last_name"),
+            first_name_lev=LevenshteinLessEqual(
+                Upper("first_name"), Value("SONYA"), Value(2) # case sensitive
+            ),
+            last_name_lev=LevenshteinLessEqual(
+                Upper("last_name"), Value("RESYES"), Value(2)
+            ),
+        ).filter(
+            first_name_dm__overlap=DaitchMokotoff(Value("Sonya")),  # case insensitive
+            last_name_dm__overlap=DaitchMokotoff(Value("Resyes")),
+            first_name_lev__lte=2,
+            last_name_lev__lte=2,
+        )
     )
     return
 
@@ -1126,14 +985,26 @@ def _():
     return
 
 
+@app.cell
+def _():
+    mo.md(r"""
+    ## Summary
+
+    - `text_pattern_ops` index for fast `__istartswith` matching
+    - Phonetic algorithms to find a broad match
+    - Levenshtein edit distance to narrow
+    """)
+    return
+
+
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
     # Thank you for coming!
 
     Links:
-    - Git repo (Django project, sample data, these slides): https://github.com/caktus/talk-fuzzy-name-search
-    - Caktus Group: https://www.caktusgroup.com/
+    - Git repo (Django project, sample data, these slides): https://cakt.us/fuzzy-repo
+    - Companion blog post: https://cakt.us/fuzzy-blog
     """)
     return
 

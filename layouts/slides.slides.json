@@ -73,11 +73,15 @@
         "type": "slide",
         "speakerNotes": "Finally--and this one is was also abundant on our project--it's easy to assume that names will be typed exactly and perfectly every time they're entered. This is not the case, and our dataset of 54M records provided ample evidence of this."
       },
-      {},
-      {},
-      {},
-      {},
-      {},
+      {
+        "speakerNotes": "In production, the data is purchased from the North Carolina court system. For testing purposes, we generated a fake dataset that loosely matched the shape of the production data:\n\n- Sourced from ~1,000,000 last names and ~600,000 first names from Kaggle\n- Names are randomly weighted according to their precedence in the United States\n- Combined and assigned a random birth date\n- Each name appears from 1-80 times in the database, and has some typos injected"
+      },
+      {
+        "showCode": false
+      },
+      {
+        "speakerNotes": "The data dump we receive from the stateis NOT a clean, unified \"Person\" table. It is a list of\nraw court records. Every time a person's name gets entered into the\ncourts \u2014 different county, different clerk, different year \u2014 a new row is\ncreated. So the same real person shows up across many duplicated records,\noften with typos, nicknames, and aliases.\n\nThis is loosely what the data model looks, with a first name, last name, middle name, and date of birth field.\n\nWe added the person_id field for demonstration purposes to help us see if we tracked down all the records corresponding to that person or not.\n\nThat duplication is exactly why the search is hard: \"Amanda Morgan\" is\nnot one row we look up; it is a cluster of rows we have to find and\nde-duplicate."
+      },
       {},
       {
         "showCode": true
@@ -119,12 +123,17 @@
       },
       {},
       {},
+      {
+        "speakerNotes": "For example"
+      },
       {},
-      {},
-      {},
+      {
+        "type": "skip"
+      },
       {
         "showCode": true
       },
+      {},
       {},
       {},
       {},
