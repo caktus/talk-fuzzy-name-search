@@ -1,0 +1,12 @@
+## DigitalOcean droplet running the talk-fuzzy-name-search app ##
+[app]
+droplet ansible_host=24.199.85.83 ansible_user=root
+
+# The single droplet also runs PostgreSQL and Caddy; the named groups
+# (children of app) make the matching group_vars files apply, mirroring
+# the recordsdb inventory.
+[postgres:children]
+app
+
+[caddy:children]
+app

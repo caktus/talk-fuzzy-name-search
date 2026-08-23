@@ -1,0 +1,45 @@
+# Build context exclusions (podman build reads .containerignore)
+
+# VCS / virtualenv / big artifacts
+.git
+.venv
+*.tar
+db.sqlite3
+db.sqlite3-journal
+
+# Python caches and temp dirs
+__pycache__/
+**/__pycache__/
+*.py[codz]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+staticfiles/
+dist/
+build/
+
+# Local env & secrets
+.env
+.envrc
+
+# Datasets & generated data
+name_dataset/us_forenames.csv
+name_dataset/us_surnames.csv
+data/
+
+# Session/agent temp dirs
+__marimo__/
+.pi/
+.pi-subagents/
+.playwright-cli/
+.scout-findings/
+dsd_logs/
+visuals/
+
+# Docs, infra, talk files (not needed in the image)
+*.md
+!README.md
+deployment/
+.github/
+slides.py
+layouts/

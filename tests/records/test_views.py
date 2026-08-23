@@ -23,6 +23,12 @@ _SCAN_NODE_RE = re.compile(
 )
 
 
+def _collapse_whitespace(html: str) -> str:
+    """Collapse runs of whitespace to single spaces so assertions match the
+    *rendered* text, not the template's line-wrapping (which djLint enforces)."""
+    return " ".join(html.split())
+
+
 class TestSearchModes:
     """Test that ?modes=... dispatches to the right search mechanisms."""
 
@@ -473,7 +479,8 @@ class TestPhoneticCodes:
     def test_dm_mode_with_empty_first_name(self, client):
         """Regression: DAITCH_MOKOTOFF(UPPER('')) returns NULL, and the batch
         phonetic-code query previously crashed on `", ".join(None)` when a
-        result row had an empty first name (e.g. ?modes=dm&first_name=&last_name=smith)."""
+        result row had an empty first name (e.g. ?modes=dm&first_name=&last_name=smith).
+        """
         CourtRecord.objects.create(
             first_name="",
             last_name="Smith",
@@ -660,7 +667,11 @@ class TestModeSQLTooltipEscaping:
         """A quote in first_name (legacy mode) renders escaped in the tooltip."""
         response = client.get(
             "/search/",
-            {"modes": "legacy", "first_name": 'x" onmouseover="alert(1)', "last_name": "Smith"},
+            {
+                "modes": "legacy",
+                "first_name": 'x" onmouseover="alert(1)',
+                "last_name": "Smith",
+            },
         )
         self._assert_escaped_in_tooltip(response, "x")
 
@@ -668,7 +679,11 @@ class TestModeSQLTooltipEscaping:
         """A quote in last_name (legacy mode) renders escaped in the tooltip."""
         response = client.get(
             "/search/",
-            {"modes": "legacy", "first_name": "John", "last_name": 'x" onmouseover="alert(1)'},
+            {
+                "modes": "legacy",
+                "first_name": "John",
+                "last_name": 'x" onmouseover="alert(1)',
+            },
         )
         self._assert_escaped_in_tooltip(response, "x")
 
@@ -805,22 +820,30 @@ class TestResultCountLabel:
     def test_full_page_says_top_200(self, client):
         """A full 200-row page renders 'Showing top 200 matches'."""
         for i in range(205):
-            CourtRecord.objects.create(first_name=f"First{i:03d}", last_name="Smith", date_of_birth=date(1990, 1, 1))
+            CourtRecord.objects.create(
+                first_name=f"First{i:03d}",
+                last_name="Smith",
+                date_of_birth=date(1990, 1, 1),
+            )
         response = client.get("/search/?modes=legacy&last_name=Smith")
         assert response.status_code == 200
         assert response.context["count"] == 200
-        html = response.content.decode()
+        html = _collapse_whitespace(response.content.decode())
         assert "Showing top 200 matches" in html
         assert "200 results" not in html
 
     def test_partial_page_omits_top(self, client):
         """A result set under the cap says 'Showing N matches' (no 'top')."""
         for i in range(10):
-            CourtRecord.objects.create(first_name=f"First{i:03d}", last_name="Smith", date_of_birth=date(1990, 1, 1))
+            CourtRecord.objects.create(
+                first_name=f"First{i:03d}",
+                last_name="Smith",
+                date_of_birth=date(1990, 1, 1),
+            )
         response = client.get("/search/?modes=legacy&last_name=Smith")
         assert response.status_code == 200
         assert response.context["count"] == 10
-        html = response.content.decode()
+        html = _collapse_whitespace(response.content.decode())
         assert "Showing 10 matches" in html
         assert "Showing top 10 matches" not in html
 
@@ -1116,7 +1139,7 @@ class TestHXRequestPartialResponse:
             assert marker not in html
         assert 'id="search-results"' not in html  # that div belongs to the shell
         assert "Search Results" in html
-        assert "Showing 1 match" in html
+        assert "Showing 1 match" in _collapse_whitespace(html)
         assert "John" in html
 
     def test_hx_request_without_name_returns_empty_state_partial(self, client):
