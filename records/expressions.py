@@ -31,7 +31,7 @@ class Soundex(Func):
     """PostgreSQL SOUNDEX() as a Django ORM expression.
 
     Usage:
-        Soundex(Upper(F('first_name')))
+        Soundex(F('first_name'))
 
     Returns a 4-character Soundex code (str).
     """
@@ -47,7 +47,7 @@ class DaitchMokotoff(Func):
     Supports GIN-indexed array overlap (&&) via __overlap.
 
     Usage:
-        DaitchMokotoff(Upper(F('first_name')))
+        DaitchMokotoff(F('first_name'))
     """
 
     function = "DAITCH_MOKOTOFF"

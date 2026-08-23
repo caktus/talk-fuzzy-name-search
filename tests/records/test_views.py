@@ -477,7 +477,7 @@ class TestPhoneticCodes:
         assert "dm_fn" in r["phonetic_codes"]
 
     def test_dm_mode_with_empty_first_name(self, client):
-        """Regression: DAITCH_MOKOTOFF(UPPER('')) returns NULL, and the batch
+        """Regression: DAITCH_MOKOTOFF('') returns NULL, and the batch
         phonetic-code query previously crashed on `", ".join(None)` when a
         result row had an empty first name (e.g. ?modes=dm&first_name=&last_name=smith).
         """
@@ -1042,7 +1042,7 @@ class TestModeSqlTooltips:
         legacy_title = self._tooltip_title(html, "legacy")
         assert legacy_title and "ILIKE" in legacy_title and "%John%" in legacy_title and "%Smith%" in legacy_title
         soundex_title = self._tooltip_title(html, "soundex")
-        assert soundex_title and "SOUNDEX(" in soundex_title and "SMITH" in soundex_title
+        assert soundex_title and "SOUNDEX(" in soundex_title and "Smith" in soundex_title
         # The phonetic tooltip also carries the query's real phonetic codes.
         assert "John=J500" in soundex_title
         assert "Smith=S530" in soundex_title

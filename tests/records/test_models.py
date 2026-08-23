@@ -366,35 +366,35 @@ class TestPhoneticGroup:
 
     TEMPLATES = {
         "soundex": (
-            "SOUNDEX(UPPER(first_name)) = SOUNDEX(%s)",
-            "SOUNDEX(UPPER(last_name)) = SOUNDEX(%s)",
+            "SOUNDEX(first_name) = SOUNDEX(%s)",
+            "SOUNDEX(last_name) = SOUNDEX(%s)",
         ),
         "dm": (
-            "DAITCH_MOKOTOFF(UPPER(first_name)) && DAITCH_MOKOTOFF(%s)",
-            "DAITCH_MOKOTOFF(UPPER(last_name)) && DAITCH_MOKOTOFF(%s)",
+            "DAITCH_MOKOTOFF(first_name) && DAITCH_MOKOTOFF(%s)",
+            "DAITCH_MOKOTOFF(last_name) && DAITCH_MOKOTOFF(%s)",
         ),
     }
 
     @pytest.mark.parametrize("mode", ["soundex", "dm"])
     def test_both_names(self, mode):
         fn_tpl, ln_tpl = self.TEMPLATES[mode]
-        sql, params = _phonetic_group(fn_tpl, ln_tpl, "John", "Smith", "JOHN", "SMITH")
+        sql, params = _phonetic_group(fn_tpl, ln_tpl, "John", "Smith", "John", "Smith")
         assert sql == f"({fn_tpl}) AND ({ln_tpl})"
-        assert params == ["JOHN", "SMITH"]
+        assert params == ["John", "Smith"]
 
     @pytest.mark.parametrize("mode", ["soundex", "dm"])
     def test_first_name_only(self, mode):
         fn_tpl, _ = self.TEMPLATES[mode]
-        sql, params = _phonetic_group(*self.TEMPLATES[mode], "John", "", "JOHN", "")
+        sql, params = _phonetic_group(*self.TEMPLATES[mode], "John", "", "John", "")
         assert sql == fn_tpl
-        assert params == ["JOHN"]
+        assert params == ["John"]
 
     @pytest.mark.parametrize("mode", ["soundex", "dm"])
     def test_last_name_only(self, mode):
         _, ln_tpl = self.TEMPLATES[mode]
-        sql, params = _phonetic_group(*self.TEMPLATES[mode], "", "Smith", "", "SMITH")
+        sql, params = _phonetic_group(*self.TEMPLATES[mode], "", "Smith", "", "Smith")
         assert sql == ln_tpl
-        assert params == ["SMITH"]
+        assert params == ["Smith"]
 
     @pytest.mark.parametrize("mode", ["soundex", "dm"])
     def test_no_names(self, mode):
