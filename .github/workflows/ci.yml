@@ -20,7 +20,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, fix/legacy-sort-timeout]
   pull_request:
 
 jobs:
