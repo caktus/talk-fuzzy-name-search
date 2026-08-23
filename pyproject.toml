@@ -8,15 +8,11 @@ dependencies = [
     "psycopg[binary]>=3.2",
     "django-environ>=0.11",
     "faker>=30",
-    "marimo>=0.10",
     "numpy>=2.0",
     "polars>=1.0",
     "django-simple-deploy>=1.4.1",
     "gunicorn>=23.0.0",
     "whitenoise>=6.7.0",
-    # Only used by the marimo slides.py SQL cells (SQLAlchemy defaults to the psycopg2 driver for postgresql:// URLs); the app's DB driver is psycopg3.
-    "sqlalchemy>=2.0.52",
-    "psycopg2-binary>=2.9.12",
 ]
 
 [dependency-groups]
@@ -28,6 +24,12 @@ dev = [
     "pre-commit>=4",
     "django-debug-toolbar>=7.0.0",
     "kagglehub>=1.0.2",
+    # Marimo slides (slides.py) only: SQLAlchemy defaults to the psycopg2
+    # driver for postgresql:// URLs. Kept out of the main group so the
+    # Docker image (built with UV_NO_DEV=1) doesn't ship them.
+    "marimo>=0.10",
+    "sqlalchemy>=2.0.52",
+    "psycopg2-binary>=2.9.12",
 ]
 
 # Tools needed to run the Ansible deployment playbooks locally:

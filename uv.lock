@@ -1164,12 +1164,9 @@ dependencies = [
     { name = "django-simple-deploy" },
     { name = "faker" },
     { name = "gunicorn" },
-    { name = "marimo" },
     { name = "numpy" },
     { name = "polars" },
     { name = "psycopg", extra = ["binary"] },
-    { name = "psycopg2-binary" },
-    { name = "sqlalchemy" },
     { name = "whitenoise" },
 ]
 
@@ -1181,10 +1178,13 @@ dev = [
     { name = "django-debug-toolbar" },
     { name = "factory-boy" },
     { name = "kagglehub" },
+    { name = "marimo" },
     { name = "pre-commit" },
+    { name = "psycopg2-binary" },
     { name = "pytest" },
     { name = "pytest-django" },
     { name = "ruff" },
+    { name = "sqlalchemy" },
 ]
 
 [package.metadata]
@@ -1194,12 +1194,9 @@ requires-dist = [
     { name = "django-simple-deploy", specifier = ">=1.4.1" },
     { name = "faker", specifier = ">=30" },
     { name = "gunicorn", specifier = ">=23.0.0" },
-    { name = "marimo", specifier = ">=0.10" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "polars", specifier = ">=1.0" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
-    { name = "psycopg2-binary", specifier = ">=2.9.12" },
-    { name = "sqlalchemy", specifier = ">=2.0.52" },
     { name = "whitenoise", specifier = ">=6.7.0" },
 ]
 
@@ -1209,10 +1206,13 @@ dev = [
     { name = "django-debug-toolbar", specifier = ">=7.0.0" },
     { name = "factory-boy", specifier = ">=3.3" },
     { name = "kagglehub", specifier = ">=1.0.2" },
+    { name = "marimo", specifier = ">=0.10" },
     { name = "pre-commit", specifier = ">=4" },
+    { name = "psycopg2-binary", specifier = ">=2.9.12" },
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-django", specifier = ">=4.9" },
     { name = "ruff", specifier = ">=0.9" },
+    { name = "sqlalchemy", specifier = ">=2.0.52" },
 ]
 
 [[package]]
