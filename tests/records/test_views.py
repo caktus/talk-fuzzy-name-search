@@ -1116,7 +1116,7 @@ class TestHXRequestPartialResponse:
             assert marker not in html
         assert 'id="search-results"' not in html  # that div belongs to the shell
         assert "Search Results" in html
-        assert "Showing 1 matches" in html
+        assert "Showing 1 match" in html
         assert "John" in html
 
     def test_hx_request_without_name_returns_empty_state_partial(self, client):
