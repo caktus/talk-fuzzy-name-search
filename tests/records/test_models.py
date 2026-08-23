@@ -61,23 +61,28 @@ class TestCourtRecordModel:
 
 @pytest.mark.django_db
 class TestLevenshteinOnlySemantics:
-    """B1/B13: Levenshtein is a precision filter on top of base modes, not a standalone search."""
+    """Levenshtein is a precision filter on top of base modes, and can also run
+    standalone (a full scan measured against the typed name)."""
 
     @pytest.fixture(autouse=True)
     def _seed_data(self):
         self.dob = date(1990, 5, 15)
-        # Two people share the queried DOB: the pre-fix DOB fallback returned
-        # both of them for any name.
+        # Two people share the queried DOB.
         CourtRecord.objects.create(first_name="John", last_name="Smith", date_of_birth=self.dob)
         CourtRecord.objects.create(first_name="Robert", last_name="Jones", date_of_birth=self.dob)
 
-    def test_levenshtein_only_name_and_dob_returns_nothing(self):
-        """B1: name + DOB with only Levenshtein must not return everyone born that day."""
+    def test_levenshtein_standalone_finds_near_name(self):
+        """Standalone Levenshtein with a name runs the edit-distance search."""
+        # dist("JAHN", "JOHN") = 1 and dist("SMITH", "SMITH") = 0 -> John Smith
+        # matches; Robert Jones is far from both query names and is cut.
+        results = CourtRecord.objects.search_unified(["levenshtein"], "Jahn", "Smith", self.dob)
+        assert [(p.first_name, p.last_name) for p in results] == [("John", "Smith")]
+
+    def test_levenshtein_standalone_no_near_match_returns_nothing(self):
+        """Standalone Levenshtein with a name that has no near match returns nothing
+        (a name query no longer falls back to the whole DOB set)."""
         results = CourtRecord.objects.search_unified(["levenshtein"], "Qzzz", "Zzzz", self.dob)
         assert list(results) == []
-
-    def test_levenshtein_only_name_without_dob_returns_nothing(self):
-        """B13: Levenshtein checked alone with a name yields no results."""
         results = CourtRecord.objects.search_unified(["levenshtein"], "Qzzz", "Zzzz")
         assert list(results) == []
 
@@ -99,22 +104,22 @@ class TestLevenshteinOnlySemantics:
 
 @pytest.mark.django_db
 class TestDobOnlySearchCap:
-    """B7: a DOB-only search is capped at 100 rows and returns a materialized list."""
+    """B7: a DOB-only search is capped at RESULT_LIMIT (200) rows and returns a materialized list."""
 
     @pytest.fixture(autouse=True)
     def _seed_data(self):
         self.dob = date(1990, 1, 1)
 
-    def test_dob_only_capped_at_100(self):
-        """150 people sharing one DOB -> exactly 100 rows returned."""
-        for i in range(150):
+    def test_dob_only_capped_at_200(self):
+        """250 people sharing one DOB -> exactly 200 rows returned."""
+        for i in range(250):
             CourtRecord.objects.create(first_name=f"First{i}", last_name=f"Last{i}", date_of_birth=self.dob)
         results = CourtRecord.objects.search_unified([], "", "", self.dob)
         assert isinstance(results, list)
-        assert len(results) == 100
+        assert len(results) == 200
 
-    def test_dob_only_returns_all_when_under_100(self):
-        """A DOB with fewer than 100 people returns all of them."""
+    def test_dob_only_returns_all_when_under_limit(self):
+        """A DOB with fewer than RESULT_LIMIT people returns all of them."""
         for i in range(3):
             CourtRecord.objects.create(first_name=f"First{i}", last_name=f"Last{i}", date_of_birth=self.dob)
         results = CourtRecord.objects.search_unified([], "", "", self.dob)
@@ -142,7 +147,7 @@ class TestTrigramVisibility:
 
     def _seed(self):
         dob = date(1990, 1, 1)
-        for _ in range(75):
+        for _ in range(150):
             CourtRecord.objects.create(first_name="John", last_name="Smith", date_of_birth=dob)
         for first, last in [
             ("Mary", "Smit"),
@@ -154,22 +159,22 @@ class TestTrigramVisibility:
             CourtRecord.objects.create(first_name=first, last_name=last, date_of_birth=dob)
 
     def test_trigram_rows_visible_with_many_base_matches(self):
-        """Base mode matches >60 rows; trigram-only rows still make the page."""
+        """Base mode matches more than the reserved-slot base cap; trigram-only rows still make the page."""
         self._seed()
         results = CourtRecord.objects.search_unified(["legacy", "trigram"], "", "Smith")
         assert isinstance(results, list)
-        assert len(results) <= 100
+        assert len(results) <= 200
 
         names = [p.last_name for p in results]
-        # All 75 base-mode matches are present, plus the trigram-only names.
-        assert names.count("Smith") == 75
+        # All 150 base-mode matches are present, plus the trigram-only names.
+        assert names.count("Smith") == 150
         for near in self.NEAR_NAMES:
             assert near in names
 
         main_rows = [p for p in results if p._match_source & 2]  # legacy bit
         tri_rows = [p for p in results if p._match_source == 32]  # trigram bit
-        assert len(main_rows) == 60  # base rows capped, reserving trigram slots
-        assert len(tri_rows) == 20  # 15 displaced Smiths + 5 near-spelling names
+        assert len(main_rows) == 120  # base rows capped, reserving trigram slots
+        assert len(tri_rows) == 35  # 30 displaced Smiths + 5 near-spelling names
 
         # Main rows come first, then the trigram top-up (KNN order, closest first).
         first_tri = next(i for i, p in enumerate(results) if p._match_source == 32)
@@ -185,7 +190,7 @@ class TestTrigramVisibility:
             assert not names & set(self.NEAR_NAMES)
 
     def test_no_trigram_keeps_full_base_page(self):
-        """Without trigram the base list keeps the full 100-row page."""
+        """Without trigram the base list is not capped to the reduced trigram base cap."""
         dob = date(1990, 1, 1)
         expected_smith = [(f"First{i:02d}", "Smith") for i in range(70)]
         expected_smithers = [(f"First{i:02d}", "Smithers") for i in range(40)]
@@ -193,10 +198,9 @@ class TestTrigramVisibility:
         for first, last in reversed(expected):
             CourtRecord.objects.create(first_name=first, last_name=last, date_of_birth=dob)
         results = CourtRecord.objects.search_unified(["legacy"], "", "smith")
-        assert len(results) == 100
-        # No default ORDER BY: assert the page contents, not a specific order
-        # (a tie on LIMIT 100 can land on any subset). Smith has only 70
-        # rows, so the page must always include at least 30 Smithers rows.
+        # 110 matches, under RESULT_LIMIT: all of them come back (no cap applied).
+        assert len(results) == 110
+        # No default ORDER BY: assert the page contents, not a specific order.
         assert {p.last_name for p in results} == {"Smith", "Smithers"}
         assert sum(1 for p in results if p.last_name == "Smithers") >= 30
 
@@ -251,39 +255,39 @@ class TestSearchUnifiedSortField:
 
 @pytest.mark.django_db
 class TestSearchUnifiedCap:
-    """B16: search_unified() is annotated -> list[CourtRecord] and documented as limited to 100;
-    no code path may return more than 100 rows."""
+    """B16: search_unified() is annotated -> list[CourtRecord] and documented as limited to
+    RESULT_LIMIT (200); no code path may return more than 200 rows."""
 
-    def test_name_search_capped_at_100(self):
-        """A name search with >100 matching rows returns at most 100 CourtRecord objects."""
+    def test_name_search_capped_at_200(self):
+        """A name search with >200 matching rows returns at most 200 CourtRecord objects."""
         dob = date(1990, 1, 1)
-        for i in range(150):
+        for i in range(250):
             CourtRecord.objects.create(first_name=f"First{i}", last_name="Smith", date_of_birth=dob)
         results = CourtRecord.objects.search_unified(["legacy"], "", "Smith")
         assert isinstance(results, list)
-        assert len(results) <= 100
+        assert len(results) <= 200
         assert all(isinstance(p, CourtRecord) for p in results)
 
-    def test_dob_only_search_capped_at_100(self):
-        """A DOB-only search with >100 matching rows returns at most 100."""
+    def test_dob_only_search_capped_at_200(self):
+        """A DOB-only search with >200 matching rows returns at most 200."""
         dob = date(1990, 1, 1)
-        for i in range(150):
+        for i in range(250):
             CourtRecord.objects.create(first_name=f"First{i}", last_name=f"Last{i}", date_of_birth=dob)
         results = CourtRecord.objects.search_unified([], "", "", dob)
         assert isinstance(results, list)
-        assert len(results) <= 100
+        assert len(results) <= 200
 
-    def test_trigram_plus_base_capped_at_100(self):
-        """Trigram + base mode: base rows (capped at 60 to reserve trigram slots)
-        plus the KNN top-up never push the merged list past 100."""
+    def test_trigram_plus_base_capped_at_200(self):
+        """Trigram + base mode: base rows (capped to reserve trigram slots)
+        plus the KNN top-up never push the merged list past 200."""
         dob = date(1990, 1, 1)
-        for _ in range(120):
+        for _ in range(250):
             CourtRecord.objects.create(first_name="John", last_name="Smith", date_of_birth=dob)
         for first, last in [("Mary", "Smyth"), ("Tom", "Smythe"), ("Pat", "Smidt")]:
             CourtRecord.objects.create(first_name=first, last_name=last, date_of_birth=dob)
         results = CourtRecord.objects.search_unified(["legacy", "trigram"], "", "Smith")
         assert isinstance(results, list)
-        assert len(results) <= 100
+        assert len(results) <= 200
         assert all(isinstance(p, CourtRecord) for p in results)
 
 
