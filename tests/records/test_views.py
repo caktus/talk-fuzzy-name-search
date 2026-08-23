@@ -109,8 +109,8 @@ class TestSearchByDateOfBirth:
     def test_date_of_birth_narrows_results(self, client, mode):
         """DOB filter narrows results to only matching records.
 
-        Levenshtein is a precision filter, not a standalone search (B1/B13),
-        so it is exercised on top of a base mode (legacy).
+        Levenshtein is exercised on top of a base mode (legacy) here; it can
+        now also run standalone (see TestLevenshteinCheckboxUX).
         """
         response = client.get(f"/search/?modes={mode}&first_name=John&last_name=Smith&date_of_birth=1990-05-15")
         assert response.status_code == 200
@@ -223,7 +223,7 @@ class TestLevenshteinFilter:
 
 
 class TestLevenshteinCheckboxUX:
-    """B13 UX: Levenshtein is a precision filter, disabled when no base mode is checked."""
+    """Levenshtein can run standalone, so its checkbox is always enabled."""
 
     @pytest.fixture(autouse=True)
     def _seed_data(self):
@@ -239,35 +239,27 @@ class TestLevenshteinCheckboxUX:
         assert match, "levenshtein checkbox not found in rendered HTML"
         return match.group(0)
 
-    def test_levenshtein_disabled_without_base_mode(self, client):
-        """No base mode checked -> Levenshtein checkbox is disabled with a visible hint."""
+    def test_levenshtein_enabled_without_base_mode(self, client):
+        """No base mode checked -> Levenshtein checkbox is still enabled (and checked)."""
         response = client.get("/search/?modes=levenshtein&first_name=John&last_name=Smith")
         assert response.status_code == 200
         checkbox = self._levenshtein_checkbox_html(response)
-        assert "disabled" in checkbox
-        assert "checked" not in checkbox
-        html = response.content.decode()
-        hint = re.search(r'<p id="levenshtein-hint"[^>]*>', html)
-        assert hint, "levenshtein hint not found in rendered HTML"
-        assert "hidden" not in hint.group(0)
-        assert "enable at least one base mode" in html
+        assert "disabled" not in checkbox
+        assert "checked" in checkbox
 
     def test_levenshtein_enabled_with_base_mode(self, client):
-        """A checked base mode keeps the Levenshtein checkbox enabled (hint hidden)."""
+        """A checked base mode keeps the Levenshtein checkbox enabled and checked."""
         response = client.get("/search/?modes=prefix,levenshtein&first_name=John&last_name=Smith")
         assert response.status_code == 200
         checkbox = self._levenshtein_checkbox_html(response)
         assert "disabled" not in checkbox
         assert "checked" in checkbox
-        hint = re.search(r'<p id="levenshtein-hint"[^>]*>', response.content.decode())
-        assert hint
-        assert "hidden" in hint.group(0)
 
-    def test_levenshtein_only_search_returns_no_results(self, client):
-        """B13 pin: Levenshtein alone + name renders an empty result set via the UI."""
+    def test_levenshtein_only_search_returns_near_matches(self, client):
+        """Standalone Levenshtein + name returns near matches (John Smith, distance 0)."""
         response = client.get("/search/?modes=levenshtein&first_name=John&last_name=Smith")
         assert response.status_code == 200
-        assert response.context["count"] == 0
+        assert response.context["count"] == 1
 
 
 class TestMatchSourceAnnotation:
@@ -807,19 +799,30 @@ class TestDobClearButtonRendering:
         assert "dob-clear-link" not in html
 
 
-class TestTop100Label:
-    """B6: the results badge says 'top N', not an unqualified total."""
+class TestResultCountLabel:
+    """The results badge says 'top N' only when the result cap was actually hit."""
 
-    def test_full_page_says_top_100(self, client):
-        """A full 100-row page renders 'Showing top 100 matches'."""
-        for i in range(105):
+    def test_full_page_says_top_200(self, client):
+        """A full 200-row page renders 'Showing top 200 matches'."""
+        for i in range(205):
             CourtRecord.objects.create(first_name=f"First{i:03d}", last_name="Smith", date_of_birth=date(1990, 1, 1))
         response = client.get("/search/?modes=legacy&last_name=Smith")
         assert response.status_code == 200
-        assert response.context["count"] == 100
+        assert response.context["count"] == 200
         html = response.content.decode()
-        assert "Showing top 100 matches" in html
-        assert "100 results" not in html
+        assert "Showing top 200 matches" in html
+        assert "200 results" not in html
+
+    def test_partial_page_omits_top(self, client):
+        """A result set under the cap says 'Showing N matches' (no 'top')."""
+        for i in range(10):
+            CourtRecord.objects.create(first_name=f"First{i:03d}", last_name="Smith", date_of_birth=date(1990, 1, 1))
+        response = client.get("/search/?modes=legacy&last_name=Smith")
+        assert response.status_code == 200
+        assert response.context["count"] == 10
+        html = response.content.decode()
+        assert "Showing 10 matches" in html
+        assert "Showing top 10 matches" not in html
 
 
 class TestSearchExplain:
@@ -876,13 +879,14 @@ class TestSearchExplain:
         assert response.context["plan"]
         assert response.context["error"] is None
 
-    def test_explain_levenshtein_alone_has_no_query(self, client):
-        """Levenshtein without a base mode: no query runs; the page says so (no 500)."""
+    def test_explain_levenshtein_alone_explains_full_scan(self, client):
+        """Levenshtein without a base mode now runs standalone; the endpoint explains it."""
         response = client.get("/search/explain/?mode=levenshtein&first_name=John&last_name=Smith")
         assert response.status_code == 200
-        assert response.context["sql"] is None
-        assert "base mode" in response.context["error"]
-        assert "base mode" in response.content.decode()
+        assert response.context["sql"]
+        assert "levenshtein_less_equal" in response.context["sql"]
+        assert response.context["plan"]
+        assert response.context["error"] is None
 
     def test_explain_no_input_renders_error(self, client):
         """No name and no DOB keeps the existing 'Provide a first_name...' error path."""
@@ -1112,7 +1116,7 @@ class TestHXRequestPartialResponse:
             assert marker not in html
         assert 'id="search-results"' not in html  # that div belongs to the shell
         assert "Search Results" in html
-        assert "Showing top 1 match" in html
+        assert "Showing 1 matches" in html
         assert "John" in html
 
     def test_hx_request_without_name_returns_empty_state_partial(self, client):

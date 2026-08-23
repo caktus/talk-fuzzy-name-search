@@ -30,6 +30,13 @@ from .expressions import LevenshteinLessEqual
 # noise a bare KNN top-100 would surface for a rare spelling.
 TRIGRAM_SIMILARITY_CUTOFF = 0.3
 
+# Hard cap on how many rows any search path returns to the page.
+RESULT_LIMIT = 200
+# When trigram runs alongside base modes, reserve this many page slots for
+# trigram KNN rows so they are actually visible (B6); the base query is capped
+# at RESULT_LIMIT - TRIGRAM_RESERVED_SLOTS to make room.
+TRIGRAM_RESERVED_SLOTS = 80
+
 # Bitmask values for the _match_source annotation. The trigram bit is set in
 # Python for the KNN top-up rows, not in the SQL CASE expression.
 MATCH_SOURCE_BITS = {
@@ -185,6 +192,30 @@ def _phonetic_group(
     return None, []
 
 
+def build_levenshtein_filter_q(first_name: str, last_name: str) -> Q:
+    """Build the WHERE condition for a standalone Levenshtein search.
+
+    ``levenshtein_less_equal(col, query, 2) <= 2`` is TRUE when the edit
+    distance is ≤ 2 (the same predicate ``apply_levenshtein_filter`` and the
+    display SQL use). Used as the base condition when Levenshtein is the only
+    selected mode (no index-backed base filter to run first) — a full scan
+    measured against the typed name, which is exactly the tradeoff the
+    standalone search demonstrates.
+    """
+    lev_q = Q()
+    if first_name:
+        lev_q &= ExpressionWrapper(
+            RawSQL("levenshtein_less_equal(UPPER(first_name), %s, 2) <= 2", [first_name.upper()]),
+            output_field=BooleanField(),
+        )
+    if last_name:
+        lev_q &= ExpressionWrapper(
+            RawSQL("levenshtein_less_equal(UPPER(last_name), %s, 2) <= 2", [last_name.upper()]),
+            output_field=BooleanField(),
+        )
+    return lev_q
+
+
 def apply_levenshtein_filter(qs: CourtRecordQuerySet, first_name: str, last_name: str) -> CourtRecordQuerySet:
     """Apply the Levenshtein precision filter (edit distance ≤ 2) as an AND.
 
@@ -254,8 +285,9 @@ class CourtRecordQuerySet(models.QuerySet):
                 'date_of_birth' or '-date_of_birth'); empty = no ORDER BY.
 
         Returns:
-            A list of CourtRecord objects (deduplicated, limited to 100). Every path
-            materializes and caps at 100, so callers get a bounded, already-
+            A list of CourtRecord objects (deduplicated, limited to RESULT_LIMIT,
+            200). Every path
+            materializes and caps at RESULT_LIMIT, so callers get a bounded, already-
             fetched list and timing around the call covers the DB fetch.
         """
         if not first_name and not last_name and not date_of_birth:
@@ -269,14 +301,23 @@ class CourtRecordQuerySet(models.QuerySet):
         # base query; empty = no ORDER BY (fastest plan, DB order).
         order_clause = (sort_field,) if sort_field else ()
 
+        # Levenshtein may run standalone: when no base mode builds a condition
+        # but Levenshtein is selected with a name, the edit-distance check IS
+        # the filter (a full scan against the typed name). Promote it to the
+        # base condition so the query runs; the refinement below is skipped in
+        # this case so it isn't applied twice.
+        standalone_levenshtein = (not q) and ("levenshtein" in modes) and (first_name or last_name)
+        if standalone_levenshtein:
+            q = build_levenshtein_filter_q(first_name, last_name)
+
         if not q and "trigram" not in modes:
-            # No base mode could build a condition (e.g. only Levenshtein is
-            # checked). Levenshtein is a precision filter on top of base
-            # modes, not a standalone search, so a name query must not fall
-            # back to the bare DOB set — that would silently ignore the name.
-            # Only a nameless DOB search returns the DOB-filtered set.
+            # No base mode could build a condition (e.g. a name query with
+            # nothing else). Levenshtein is not a standalone search on its own
+            # beyond the case above, so a name query must not fall back to the
+            # bare DOB set — that would silently ignore the name. Only a
+            # nameless DOB search returns the DOB-filtered set.
             if date_of_birth and not first_name and not last_name:
-                return list(self.filter(date_of_birth=date_of_birth).order_by(*order_clause)[:100])
+                return list(self.filter(date_of_birth=date_of_birth).order_by(*order_clause)[:RESULT_LIMIT])
             return []
 
         # Build main queryset
@@ -286,8 +327,9 @@ class CourtRecordQuerySet(models.QuerySet):
         if order_clause:
             qs = qs.order_by(*order_clause)
 
-        # Levenshtein as a precision filter (AND) on top of the other modes
-        if "levenshtein" in modes:
+        # Levenshtein as a precision filter (AND) on top of the other modes.
+        # Skipped when it is already the standalone base condition above.
+        if "levenshtein" in modes and not standalone_levenshtein:
             qs = apply_levenshtein_filter(qs, first_name, last_name)
 
         # Annotate match_source bitmask using SQL CASE expressions
@@ -304,11 +346,15 @@ class CourtRecordQuerySet(models.QuerySet):
         # Build main list from non-trigram modes.
         # When trigram is the ONLY mode, q is empty — skip the unfiltered scan.
         # When trigram runs alongside base modes with a name, cap the base rows
-        # at 60 so trigram rows get reserved slots on the page and are actually
-        # visible (B6); without trigram the full 100-row page is base rows.
+        # so trigram rows get reserved slots on the page and are actually
+        # visible (B6); without trigram the full RESULT_LIMIT-row page is base rows.
         main_list = []
         if bool(q):
-            main_limit = 60 if "trigram" in modes and (first_name or last_name) else 100
+            main_limit = (
+                RESULT_LIMIT - TRIGRAM_RESERVED_SLOTS
+                if "trigram" in modes and (first_name or last_name)
+                else RESULT_LIMIT
+            )
             main_list = list(qs[:main_limit])
         main_ids = {obj.id for obj in main_list}
 
@@ -319,18 +365,18 @@ class CourtRecordQuerySet(models.QuerySet):
             if date_of_birth:
                 tri_qs = tri_qs.filter(date_of_birth=date_of_birth)
             tri_qs = tri_qs.trigram_ordered(first_name, last_name)
-            for obj in tri_qs[:100]:
+            for obj in tri_qs[:RESULT_LIMIT]:
                 if obj.id not in main_ids:
                     obj._match_source = MATCH_SOURCE_BITS["trigram"]
                     main_list.append(obj)
                     main_ids.add(obj.id)
-                    if len(main_list) >= 100:
+                    if len(main_list) >= RESULT_LIMIT:
                         break
 
         # Without a page sort, trigram rows (KNN distance order) are appended
         # after the base rows. With a page sort (e.g. DOB), the top-up rows
         # would break the page order, so the merged list is re-sorted — a
-        # cheap Python sort over at most 100 already-fetched rows; the base
+        # cheap Python sort over at most RESULT_LIMIT (200) already-fetched rows; the base
         # query's SQL ORDER BY still does the heavy lifting (cheap sort
         # input before LIMIT).
         if order_clause:
