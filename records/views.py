@@ -15,13 +15,15 @@ from django.db import connection
 from django.http import HttpRequest, HttpResponse
 from django.template.response import TemplateResponse
 
-from .forms import BASE_MODES, SEARCH_MODES, ExplainForm, RefreshForm, SearchForm
+from .forms import SEARCH_MODES, ExplainForm, RefreshForm, SearchForm
 from .models import (
     _MATCH_SOURCE_MODES,
     MATCH_SOURCE_BITS,
+    RESULT_LIMIT,
     TRIGRAM_SIMILARITY_CUTOFF,
     CourtRecord,
     apply_levenshtein_filter,
+    build_levenshtein_filter_q,
     build_unified_filter,
 )
 
@@ -48,9 +50,9 @@ def _explain_queryset_for(modes: list[str], first_name: str, last_name: str, dat
     Returns (queryset, kind) where kind is "main" (the OR-ed filter query,
     with the Levenshtein precision filter, DOB and page sort applied the
     same way search_unified applies them) or "trigram" (the separate KNN
-    ORDER BY ... LIMIT 100 query). Returns (None, None) when
-    search_unified() would run no query at all (e.g. Levenshtein checked
-    without any base mode and no DOB).
+    ORDER BY ... LIMIT 200 query). Returns (None, None) when
+    search_unified() would run no query at all (a name query with no base
+    mode, no Levenshtein, and no DOB).
     """
     has_name = bool(first_name or last_name)
 
@@ -61,24 +63,33 @@ def _explain_queryset_for(modes: list[str], first_name: str, last_name: str, dat
         tri_qs = CourtRecord.objects
         if date_of_birth:
             tri_qs = tri_qs.filter(date_of_birth=date_of_birth)
-        return tri_qs.trigram_ordered(first_name, last_name)[:100], "trigram"
+        return tri_qs.trigram_ordered(first_name, last_name)[:RESULT_LIMIT], "trigram"
 
     order_clause = (sort_field,) if sort_field else ()
 
     q = build_unified_filter(modes, first_name, last_name)
+    # Levenshtein checked with a name but no base mode runs standalone (a
+    # full scan against the typed name) — mirror search_unified's base query.
+    standalone_levenshtein = (not q) and ("levenshtein" in modes) and has_name
+    if standalone_levenshtein:
+        q = build_levenshtein_filter_q(first_name, last_name)
+
     if not q:
+        # DOB-only path: explain the bare DOB filter (+ page sort).
         if date_of_birth:
-            # DOB-only path: explain the bare DOB filter (+ page sort).
-            return CourtRecord.objects.filter(date_of_birth=date_of_birth).order_by(*order_clause)[:100], "main"
+            dob_qs = CourtRecord.objects.filter(date_of_birth=date_of_birth).order_by(*order_clause)
+            return dob_qs[:RESULT_LIMIT], "main"
         return None, None
 
     qs = CourtRecord.objects.filter(q)
     if date_of_birth:
         qs = qs.filter(date_of_birth=date_of_birth)
     qs = qs.order_by(*order_clause)
-    if "levenshtein" in modes:
+    # Levenshtein as a precision filter on top of base modes; skipped when it
+    # is the standalone base condition (already in the WHERE clause above).
+    if "levenshtein" in modes and not standalone_levenshtein:
         qs = apply_levenshtein_filter(qs, first_name, last_name)
-    return qs[:100], "main"
+    return qs[:RESULT_LIMIT], "main"
 
 
 # Values for the ?sort= URL parameter on the results table headers.
@@ -285,11 +296,11 @@ def _search_response(request: HttpRequest) -> HttpResponse:
         {
             "modes": SEARCH_MODES,
             "enabled_modes": enabled_modes,
-            "has_base_mode": any(m in BASE_MODES for m in enabled_modes),
             "first_name": first_name,
             "last_name": last_name,
             "date_of_birth": date_of_birth,
-            "total_records": _cached_total_records(),
+            "total_records": f"{_cached_total_records():,}",
+            "result_limit": RESULT_LIMIT,
             "mode_sql": mode_sql,
             "phonetic_codes": phonetic_codes,
             "phonetic_tooltips": _phonetic_tooltips(first_name, last_name, phonetic_codes, mode_sql),
@@ -583,9 +594,9 @@ def search_explain(request: HttpRequest) -> HttpResponse:
 
     if qs is None:
         context["error"] = (
-            "No query to explain: Levenshtein is a precision filter applied on top of a base mode, "
-            "so with no base mode enabled (and no DOB) search_unified runs no query. "
-            "Enable a base mode such as legacy or prefix."
+            "No query to explain: there is nothing to search with. Provide a first "
+            "or last name with a search mode (legacy, prefix, soundex, DM, or "
+            "Levenshtein) and/or a date of birth."
         )
         return TemplateResponse(request, "records/explain.html", context)
 
