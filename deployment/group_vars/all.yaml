@@ -3,7 +3,7 @@
 
 ### Application / git ###
 # Branch the deployment builds the image from on the droplet.
-git_branch: podman-deploy
+git_branch: main
 
 # Domain served by Caddy (automatic Let's Encrypt HTTPS).
 # The A record for this domain points at the droplet's public IP.
