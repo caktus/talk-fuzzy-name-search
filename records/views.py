@@ -140,10 +140,10 @@ def _run_unified_search(modes: list[str], first_name: str, last_name: str, date_
             c.execute(
                 """
                 SELECT p.id,
-                       SOUNDEX(UPPER(p.first_name)),
-                       SOUNDEX(UPPER(p.last_name)),
-                       COALESCE(DAITCH_MOKOTOFF(UPPER(p.first_name)), '{}'),
-                       COALESCE(DAITCH_MOKOTOFF(UPPER(p.last_name)), '{}')
+                       SOUNDEX(p.first_name),
+                       SOUNDEX(p.last_name),
+                       COALESCE(DAITCH_MOKOTOFF(p.first_name), '{}'),
+                       COALESCE(DAITCH_MOKOTOFF(p.last_name), '{}')
                 FROM records_courtrecord p
                 WHERE p.id = ANY(%s)
             """,
@@ -181,24 +181,22 @@ MODE_SQL_DESCRIPTIONS: dict[str, str] = {
 
 def _mode_snippets(mode: str, first_name: str, last_name: str) -> list[str]:
     """Build the per-name display SQL snippets for one search mode."""
-    fn = first_name.upper()
-    ln = last_name.upper()
     parts: list[str] = []
     if mode == "levenshtein":
-        if fn:
-            parts.append(f"levenshtein_less_equal(UPPER(first_name), '{fn}', 2) <= 2")
-        if ln:
-            parts.append(f"levenshtein_less_equal(UPPER(last_name), '{ln}', 2) <= 2")
+        if first_name:
+            parts.append(f"levenshtein_less_equal(UPPER(first_name), '{first_name.upper()}', 2) <= 2")
+        if last_name:
+            parts.append(f"levenshtein_less_equal(UPPER(last_name), '{last_name.upper()}', 2) <= 2")
     elif mode == "trigram":
-        if fn:
+        if first_name:
             parts.append(f"similarity(first_name, '{first_name}') >= {TRIGRAM_SIMILARITY_CUTOFF}")
-        if ln:
+        if last_name:
             parts.append(f"similarity(last_name, '{last_name}') >= {TRIGRAM_SIMILARITY_CUTOFF}")
-        if fn and ln:
+        if first_name and last_name:
             parts.append(f"ORDER BY (last_name <-> '{last_name}'), (first_name <-> '{first_name}')")
-        elif ln:
+        elif last_name:
             parts.append(f"ORDER BY (last_name <-> '{last_name}')")
-        elif fn:
+        elif first_name:
             parts.append(f"ORDER BY (first_name <-> '{first_name}')")
     else:
         # prefix/legacy/soundex/dm: render the actual search templates from
@@ -231,17 +229,15 @@ def _get_phonetic_codes(first_name: str, last_name: str) -> dict:
     code list), not Python list reprs.
     """
     codes = {}
-    fn = first_name.upper()
-    ln = last_name.upper()
-    if fn or ln:
+    if first_name or last_name:
         with connection.cursor() as c:
-            if fn:
-                c.execute("SELECT SOUNDEX(%s), DAITCH_MOKOTOFF(%s)", [fn, fn])
+            if first_name:
+                c.execute("SELECT SOUNDEX(%s), DAITCH_MOKOTOFF(%s)", [first_name, first_name])
                 row = c.fetchone()
                 codes["soundex_fn"] = row[0]
                 codes["dm_fn"] = ", ".join(row[1])
-            if ln:
-                c.execute("SELECT SOUNDEX(%s), DAITCH_MOKOTOFF(%s)", [ln, ln])
+            if last_name:
+                c.execute("SELECT SOUNDEX(%s), DAITCH_MOKOTOFF(%s)", [last_name, last_name])
                 row = c.fetchone()
                 codes["soundex_ln"] = row[0]
                 codes["dm_ln"] = ", ".join(row[1])
