@@ -24,7 +24,7 @@
       },
       {
         "type": "slide",
-        "speakerNotes": "Once all the data is collected from a client, it's time to search. This is the step we're focused on today!\nStaff then have to search court and\nlaw-enforcement databases for every record tied to that client. \nThis is where things can get tricky because names are sometimes typed inconsistently; there could be misspellings, nicknames, or abbreviations ( such as Matt instead of Matthew)\nSo a simple exact-match search will miss records that exist in those databases."
+        "speakerNotes": "Once all the data is collected from a client, it's time to search. This is the step we're focused on today!\nStaff then have to search court and\nlaw-enforcement databases for every record tied to that client. \nThis is where things can get tricky because names are sometimes typed or written inconsistently; there could be misspellings, nicknames, or abbreviations ( such as Matt instead of Matthew)\nSo a simple exact-match search will miss records that exist in those databases."
       },
       {
         "type": "slide",

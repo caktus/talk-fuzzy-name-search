@@ -202,12 +202,18 @@ def build_levenshtein_filter_q(first_name: str, last_name: str) -> Q:
     lev_q = Q()
     if first_name:
         lev_q &= ExpressionWrapper(
-            RawSQL("levenshtein_less_equal(UPPER(first_name), %s, 2) <= 2", [first_name.upper()]),
+            RawSQL(
+                "levenshtein_less_equal(UPPER(first_name), %s, 2) <= 2",
+                [first_name.upper()],
+            ),
             output_field=BooleanField(),
         )
     if last_name:
         lev_q &= ExpressionWrapper(
-            RawSQL("levenshtein_less_equal(UPPER(last_name), %s, 2) <= 2", [last_name.upper()]),
+            RawSQL(
+                "levenshtein_less_equal(UPPER(last_name), %s, 2) <= 2",
+                [last_name.upper()],
+            ),
             output_field=BooleanField(),
         )
     return lev_q
@@ -296,7 +302,9 @@ class CourtRecordQuerySet(models.QuerySet):
 
         # Page sort (e.g. ?sort=dob_asc) applied as a SQL ORDER BY on the
         # base query; empty = no ORDER BY (fastest plan, DB order).
-        order_clause = (sort_field,) if sort_field else ()
+        # Dropped when legacy is enabled: ORDER BY on an unindexed ILIKE OR-branch
+        # can make Postgres pick a catastrophic DOB-index-ordered scan plan.
+        order_clause = (sort_field,) if sort_field and "legacy" not in modes else ()
 
         # Levenshtein may run standalone: when no base mode builds a condition
         # but Levenshtein is selected with a name, the edit-distance check IS

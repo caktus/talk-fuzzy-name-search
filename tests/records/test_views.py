@@ -204,6 +204,25 @@ class TestSearchSortByDateOfBirth:
         assert explain.status_code == 200
         assert "ORDER BY" not in explain.context["sql"]
 
+    def test_legacy_mode_ignores_sort_param(self, client):
+        """legacy's unindexed ILIKE can't safely combine with a DOB ORDER BY -- sort is dropped."""
+        response = client.get("/search/?modes=prefix,legacy&last_name=Smith&sort=dob_asc")
+        assert response.status_code == 200
+        results = response.context["results"]
+        dobs = [r["person"].date_of_birth for r in results]
+        assert dobs != sorted(dobs)
+
+    def test_legacy_mode_disables_sort_link_in_page(self, client):
+        response = client.get("/search/?modes=prefix,legacy&last_name=Smith")
+        assert response.status_code == 200
+        assert b"Sort disabled" in response.content
+        assert b"sort=dob_asc" not in response.content
+
+    def test_legacy_mode_explain_has_no_order_by(self, client):
+        explain = client.get("/search/explain/?modes=prefix,legacy&last_name=Smith&sort=dob_asc")
+        assert explain.status_code == 200
+        assert "ORDER BY" not in explain.context["sql"]
+
 
 class TestLevenshteinFilter:
     """Test that Levenshtein acts as a precision filter."""
