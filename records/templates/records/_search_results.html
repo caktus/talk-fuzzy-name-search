@@ -10,7 +10,9 @@
                     </p>
                 </div>
                 <div class="flex items-center gap-3 shrink-0">
-                    <span class="inline-flex items-center rounded-full bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-600/20">Showing {% if count >= result_limit %}top {% endif %}{{ count }} match{{ count|pluralize:"es" }}</span>
+                    <span class="inline-flex items-center rounded-full bg-blue-50 px-2 py-1 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-600/20">Showing
+                        {% if count >= result_limit %}top{% endif %}
+                    {{ count }} match{{ count|pluralize:"es" }}</span>
                     <span class="inline-flex items-center rounded-full {% if elapsed_ms < 100 %}bg-green-50 text-green-700 ring-green-600/20{% else %}bg-yellow-50 text-yellow-700 ring-yellow-600/20{% endif %} px-2 py-1 text-xs font-medium ring-1 ring-inset">{{ elapsed_ms|floatformat:1 }}ms</span>
                     <a href="{% url 'records:search_explain' %}?{% for key, val in request.GET.items %}{% if key != 'modes' and key != 'mode' %}{{ key }}={{ val|urlencode }}&{% endif %}{% endfor %}modes={{ enabled_modes|join:","|urlencode }}"
                        target="_blank"
