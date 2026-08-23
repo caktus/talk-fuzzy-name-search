@@ -739,7 +739,7 @@ def _():
             soundex ('rosas') as soundex_rosas,
             levenshtein ('resyes', 'rosas');
 
-        -- soundex codes match, but have a Levenshtein distance of '4'
+        -- soundex codes match, but have a Levenshtein distance of '3'
         """,
         engine=engine
     )
@@ -983,9 +983,12 @@ def _():
     mo.md(r"""
     ## Summary
 
+    - This is a hard problem!
     - `text_pattern_ops` index for fast `__istartswith` matching
-    - Phonetic algorithms to find a broad match
-    - Levenshtein edit distance to narrow
+    - `soundex()` and `daitch_mokotoff()` algorithms broaden the search
+    - `levenshtein_less_equal()` to narrow it again
+    - Create indexes that match your _exact_ function calls
+    - Postgres is awesome!
     """)
     return
 
@@ -996,7 +999,7 @@ def _():
     # Thank you for coming!
 
     Links:
-    - Git repo (Django project, sample data, these slides): https://cakt.us/fuzzy-repo
+    - Git repo: https://cakt.us/fuzzy-repo
     - Companion blog post: https://cakt.us/fuzzy-blog
     """)
     return

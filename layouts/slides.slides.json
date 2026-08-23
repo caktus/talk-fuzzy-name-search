@@ -137,7 +137,9 @@
       {},
       {},
       {},
-      {},
+      {
+        "speakerNotes": "In summary, this is a hard problem! There is no magical combination of these algorithms that will solve all your search issues.\n\nOur goal with this project was to fine tune the a particular set of algoirthms, and enable our users to with a search that is super fast so they can quickly try different combinations or nicknames to find the cases they're looking for.\n\nAnd the fact the postgres can do this on my 3 year old laptop is awesome!"
+      },
       {}
     ],
     "deck": {
