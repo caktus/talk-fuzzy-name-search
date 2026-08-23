@@ -30,11 +30,6 @@ dev = [
     "marimo>=0.10",
     "sqlalchemy>=2.0.52",
     "psycopg2-binary>=2.9.12",
-]
-
-# Tools needed to run the Ansible deployment playbooks locally:
-#   uv run --only-group=deploy ansible-playbook deployment/setup.yaml
-deploy = [
     "ansible>=12.2.0",
 ]
 

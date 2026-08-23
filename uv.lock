@@ -1171,10 +1171,8 @@ dependencies = [
 ]
 
 [package.dev-dependencies]
-deploy = [
-    { name = "ansible" },
-]
 dev = [
+    { name = "ansible" },
     { name = "django-debug-toolbar" },
     { name = "factory-boy" },
     { name = "kagglehub" },
@@ -1201,8 +1199,8 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-deploy = [{ name = "ansible", specifier = ">=12.2.0" }]
 dev = [
+    { name = "ansible", specifier = ">=12.2.0" },
     { name = "django-debug-toolbar", specifier = ">=7.0.0" },
     { name = "factory-boy", specifier = ">=3.3" },
     { name = "kagglehub", specifier = ">=1.0.2" },

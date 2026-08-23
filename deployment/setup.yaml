@@ -3,11 +3,12 @@
 # droplet. Everything on the server is managed by this playbook (no manual
 # server edits).
 #
-# Usage (from the repo root, with the `deploy` uv group installed):
+# Usage (from the repo root, with the dev uv group installed — the default
+# `uv sync` includes ansible):
 #   cd deployment
-#   ../.venv/bin/ansible-galaxy install -fr requirements.yaml   # first time
-#   ../.venv/bin/ansible-playbook setup.yaml                    # everything
-#   ../.venv/bin/ansible-playbook setup.yaml -t app             # one tag
+#   uv run ansible-galaxy install -fr requirements.yaml   # first time
+#   uv run ansible-playbook setup.yaml                    # everything
+#   uv run ansible-playbook setup.yaml -t app             # one tag
 #
 # Plays run in the order they appear below; that order is also a valid
 # first-run order for provisioning a brand-new droplet. Tag them to run a

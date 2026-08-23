@@ -19,12 +19,13 @@ Roles and collections are declared in `requirements.yaml` and installed into
 
 - A fresh **Ubuntu 24.04** droplet (the tuning in `postgres.yaml` assumes
   ~4 vCPU / 16 GB).
-- This checkout of the repo, with the `deploy` uv group available:
+- This checkout of the repo, with the dev group installed (the default
+  `uv sync` from the repo root includes ansible):
   ```bash
-  uv sync --only-group=deploy        # from the repo root
+  uv sync                            # from the repo root
   ```
-  All commands below use `uv run --only-group=deploy ...` and are run from
-  the `deployment/` directory.
+  All commands below use `uv run ...` and are run from the `deployment/`
+  directory.
 
 ## Configure before the first run
 
@@ -49,12 +50,12 @@ pass provisions a brand-new droplet.
 
 1. Install the roles/collections:
    ```bash
-   uv run --only-group=deploy ansible-galaxy install -fr requirements.yaml
+   uv run ansible-galaxy install -fr requirements.yaml
    ```
 
 2. Run through the steps up to (and including) the GitHub deploy key:
    ```bash
-   uv run --only-group=deploy ansible-playbook setup.yaml \
+   uv run ansible-playbook setup.yaml \
      -t common -t postgres -t podman_user -t secrets -t postgres_objects -t git_key
    ```
    This sets up the base system, PostgreSQL, the app user, generates the
@@ -66,7 +67,7 @@ pass provisions a brand-new droplet.
 
 4. Finish the deployment (idempotent — re-runs steps 2 harmlessly):
    ```bash
-   uv run --only-group=deploy ansible-playbook setup.yaml
+   uv run ansible-playbook setup.yaml
    ```
    The `app` play clones the repo, builds the image, and starts the gunicorn
    container (which runs migrations on start). The `caddy` play installs Caddy,
@@ -87,17 +88,17 @@ pass provisions a brand-new droplet.
 
 - **Ship a code change:** push to `git_branch`, then
   ```bash
-  uv run --only-group=deploy ansible-playbook setup.yaml -t app
+  uv run ansible-playbook setup.yaml -t app
   ```
   The podman role re-clones, rebuilds the image only if the git checkout
   changed, recreates the container (env changes also trigger a recreate), and
   the entrypoint runs migrations.
 
 - **Change the web config / Caddyfile:** edit `group_vars/caddy.yaml`, then
-  `uv run --only-group=deploy ansible-playbook setup.yaml -t caddy`.
+  `uv run ansible-playbook setup.yaml -t caddy`.
 
 - **Change app env / container:** edit `group_vars/app.yaml`, then
-  `uv run --only-group=deploy ansible-playbook setup.yaml -t app`.
+  `uv run ansible-playbook setup.yaml -t app`.
 
 - **Full re-run** (`ansible-playbook setup.yaml`) is always safe and
   idempotent; use it after any change or to reconcile drift.
