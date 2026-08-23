@@ -49,9 +49,21 @@ MATCH_SOURCE_BITS = {
 
 # mode -> (bit, per-name SQL template with {field}, param transform)
 _MATCH_SOURCE_MODES = {
-    "prefix": (MATCH_SOURCE_BITS["prefix"], "UPPER({field}) LIKE %s", lambda v: v.upper() + "%"),
-    "legacy": (MATCH_SOURCE_BITS["legacy"], "{field} ILIKE %s", lambda v: "%" + v + "%"),
-    "soundex": (MATCH_SOURCE_BITS["soundex"], "SOUNDEX(UPPER({field})) = SOUNDEX(%s)", lambda v: v.upper()),
+    "prefix": (
+        MATCH_SOURCE_BITS["prefix"],
+        "UPPER({field}) LIKE %s",
+        lambda v: v.upper() + "%",
+    ),
+    "legacy": (
+        MATCH_SOURCE_BITS["legacy"],
+        "{field} ILIKE %s",
+        lambda v: "%" + v + "%",
+    ),
+    "soundex": (
+        MATCH_SOURCE_BITS["soundex"],
+        "SOUNDEX(UPPER({field})) = SOUNDEX(%s)",
+        lambda v: v.upper(),
+    ),
     "dm": (
         MATCH_SOURCE_BITS["dm"],
         "DAITCH_MOKOTOFF(UPPER({field})) && DAITCH_MOKOTOFF(%s)",
@@ -205,12 +217,18 @@ def build_levenshtein_filter_q(first_name: str, last_name: str) -> Q:
     lev_q = Q()
     if first_name:
         lev_q &= ExpressionWrapper(
-            RawSQL("levenshtein_less_equal(UPPER(first_name), %s, 2) <= 2", [first_name.upper()]),
+            RawSQL(
+                "levenshtein_less_equal(UPPER(first_name), %s, 2) <= 2",
+                [first_name.upper()],
+            ),
             output_field=BooleanField(),
         )
     if last_name:
         lev_q &= ExpressionWrapper(
-            RawSQL("levenshtein_less_equal(UPPER(last_name), %s, 2) <= 2", [last_name.upper()]),
+            RawSQL(
+                "levenshtein_less_equal(UPPER(last_name), %s, 2) <= 2",
+                [last_name.upper()],
+            ),
             output_field=BooleanField(),
         )
     return lev_q
@@ -299,7 +317,9 @@ class CourtRecordQuerySet(models.QuerySet):
 
         # Page sort (e.g. ?sort=dob_asc) applied as a SQL ORDER BY on the
         # base query; empty = no ORDER BY (fastest plan, DB order).
-        order_clause = (sort_field,) if sort_field else ()
+        # Dropped when legacy is enabled: ORDER BY on an unindexed ILIKE OR-branch
+        # can make Postgres pick a catastrophic DOB-index-ordered scan plan.
+        order_clause = (sort_field,) if sort_field and "legacy" not in modes else ()
 
         # Levenshtein may run standalone: when no base mode builds a condition
         # but Levenshtein is selected with a name, the edit-distance check IS
@@ -430,11 +450,19 @@ class CourtRecord(models.Model):
         indexes = [
             # Functional B-tree indexes for SOUNDEX equality comparisons
             models.Index(
-                models.Func(models.F("first_name"), function="SOUNDEX", template="SOUNDEX(UPPER(%(expressions)s))"),
+                models.Func(
+                    models.F("first_name"),
+                    function="SOUNDEX",
+                    template="SOUNDEX(UPPER(%(expressions)s))",
+                ),
                 name="idx_person_first_name_soundex",
             ),
             models.Index(
-                models.Func(models.F("last_name"), function="SOUNDEX", template="SOUNDEX(UPPER(%(expressions)s))"),
+                models.Func(
+                    models.F("last_name"),
+                    function="SOUNDEX",
+                    template="SOUNDEX(UPPER(%(expressions)s))",
+                ),
                 name="idx_person_last_name_soundex",
             ),
             # Functional GIN indexes for DAITCH_MOKOTOFF array overlap (&&)

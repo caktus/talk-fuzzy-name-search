@@ -65,7 +65,9 @@ def _explain_queryset_for(modes: list[str], first_name: str, last_name: str, dat
             tri_qs = tri_qs.filter(date_of_birth=date_of_birth)
         return tri_qs.trigram_ordered(first_name, last_name)[:RESULT_LIMIT], "trigram"
 
-    order_clause = (sort_field,) if sort_field else ()
+    # Mirrors search_unified()'s guard: legacy's unindexed ILIKE combined with
+    # a DOB ORDER BY can trigger a catastrophic index-ordered scan plan.
+    order_clause = (sort_field,) if sort_field and "legacy" not in modes else ()
 
     q = build_unified_filter(modes, first_name, last_name)
     # Levenshtein checked with a name but no base mode runs standalone (a
@@ -558,7 +560,10 @@ def _generate_help_examples() -> dict:
 
     # Pick one name as the base
     base_fn, base_ln = names[0]
-    return {"dob": dob.strftime("%Y-%m-%d"), "groups": _build_example_groups(base_fn, base_ln)}
+    return {
+        "dob": dob.strftime("%Y-%m-%d"),
+        "groups": _build_example_groups(base_fn, base_ln),
+    }
 
 
 def search_explain(request: HttpRequest) -> HttpResponse:
