@@ -16,37 +16,38 @@
         "speakerNotes": "We had a lot of help with this presentation from our colleagues Colin and Simon, who helped with working out the slides and the initial implementation for our client, respectively.\n\nTo set the stage today, we need to take a step back and talk about criminal record expungement."
       },
       {
-        "speakerNotes": "(Tobias) For this section of the presentation I will hand it off to Gerald.\n\n(Gerald) This is an area of legal aid where non-profit organizations, public defenders,\nand sometimes private attorneys help community members clear eligible charges\nfrom their records, such as dismissed or not guilty charges. ( A not guilty or dismissed charge can still show on a person's record)\n\nFor someone trying to secure housing or apply for a job, an expungement can\nbe life-changing. But under the hood, the process of preparing these petitions\nis painfully manual. Attorneys and paralegals must manually track down potentially\nhundreds of records of a period of decades, verify every single charge, and\ntranscribe everything onto strictly formatted court forms."
+        "speakerNotes": "(Tobias) For this section of the presentation I will hand it off to Gerald.\n\n(Gerald) This is an area of legal aid where non-profit organizations, public defenders,\nand sometimes private attorneys help community members clear eligible charges\nfrom their records, such as dismissed or not guilty charges. ( One thing that some people may not realize is that a not guilty or dismissed charge can still show on a person's record)\n\nSo for someone trying to secure housing or apply for a job, an expungement can\nbe life-changing. \nBut under the hood, the process of preparing these petitions for expungements\nis painfully manual. \nAttorneys and paralegals must track down potentially hundreds of records spanning decades\u2014review every single charge, then manually enter everything into strictly formatted court forms."
       },
       {
         "type": "slide",
-        "speakerNotes": "Everything starts with intake. A client comes in, and staff need to\ncollect every name they've gone by, their date of birth, and the counties they've lived in, so nothing gets missed in the search that\nfollows."
+        "speakerNotes": "So here's an overview of what the full process looks like.\n\nEverything starts with intake.  When a client comes in looking for expungement, staff needs to\ncollect every name the client has gone by, their date of birth....and the counties they've lived in, so nothing gets missed in the record search that follows."
       },
       {
         "type": "slide",
-        "speakerNotes": "This is the step we're focused on today. Staff then have to search court and\nlaw-enforcement databases for every record tied to that client, and\nnames are sometimes typed inconsistently \u2014 misspellings, nicknames, abbreviations \u2014\nso a simple exact-match search misses records."
+        "speakerNotes": "Once all the data is collected from a client, it's time to search. This is the step we're focused on today!\nStaff then have to search court and\nlaw-enforcement databases for every record tied to that client. \nThis is where things can get tricky because names are sometimes typed or written inconsistently; there could be misspellings, nicknames, or abbreviations ( such as Matt instead of Matthew)\nSo a simple exact-match search will miss records that exist in those databases."
       },
       {
         "type": "slide",
-        "speakerNotes": "Once every record is found, each charge gets checked against state\nstatutes to see if it qualifies for expungement."
+        "speakerNotes": "Once every record is found for a client, each charge gets checked against state\nstatutes to see if it qualifies for expungement."
       },
       {
         "type": "slide",
-        "speakerNotes": "From there, every eligible charge has to be transcribed onto strictly\nformatted court petition forms, by hand \u2014 another\nmanual, error-prone step in this process."
+        "speakerNotes": "From there, every eligible charge has to be transcribed onto strictly\nformatted court petition forms, by hand, which is  another\nmanual, error-prone step in this process."
       },
       {
         "type": "slide",
         "speakerNotes": "Finally, the completed petition is filed with the court. If it's\ngranted, the records are cleared \u2014 but getting here can take weeks of\nmanual work for a single client."
       },
       {
-        "speakerNotes": "When we first took on this project, our assumption was that the core\nchallenge would be eligibility mapping, PDF form generation or other aspects of the\nworkflow\u2014taking client data, applying NC statute rules, and cleanly\ninjecting it into standardized court paperwork. But then we held a\ndedicated discovery workshop with our client.\n\nDuring the workshop, we realized that finding the proper records\nquickly was the true bottleneck preventing eligible community\nmembers from getting help.\n\nThorough record checks are critical because conviction expunctions in North Carolina are generally a one-shot opportunity. Once a court grants a conviction expunction, the client cannot use that statute again\u2014meaning any omitted conviction stays on their record permanently. Comprehensive statewide searches are essential due diligence to ensure every eligible charge is included before filing.",
+        "speakerNotes": "When we first took on this project, we assumed the main challenge would be things like eligibility mapping, PDF form generation, and other workflow pieces such as taking client data.....applying North Carolina statute rules, and cleanly inserting it into standardized court forms. But that changed once we held a dedicated discovery workshop with the client.\n\nDuring the workshop, we realized that finding the proper records\n\"quickly\" was the true bottleneck preventing eligible community\nmembers from getting help.\n\nThorough record checks are critical because conviction expunctions in North Carolina are generally a one-shot opportunity. Once a court grants a conviction expunction, the client cannot use that statute again\u2014meaning any omitted conviction stays on their record permanently. Comprehensive statewide searches are essential due diligence to ensure every eligible charge is included before filing.",
         "type": "slide"
       },
       {
-        "speakerNotes": "Here is the core problem: the state transitioned away from its legacy system\nto a \"modern\" web portal. While you might expect a newer system to speed up\nlegal workflows, in reality, it severely restricted how attorneys can search\nfor records.\n\nAs you can see on screen, doing a simple name search in this portal routinely\ntakes 10 to 15 seconds\u2014or longer\u2014per query. In our discovery workshop with the\nclient, staff shared that under the new portal system, their record-pulling time\ngrew from 3 hours up to 10 hours per client. To make matters worse, while the\nsystem claims to offer fuzzy search matching, the underlying logic is poorly\nimplemented, ballooning an 6 item search result to 200+ results when selected.\nWhen enabled, it ends up matching too many false positives, rather than giving attorneys what they actually need.\nAnd because the new system caps the search results at 200 records, the risk of missing records is real."
+        "speakerNotes": "Here is the core problem: the state transitioned away from its legacy system\nto a \"modern\" web portal. While you might expect a newer system to speed up\nlegal workflows, in reality, it severely restricted how attorneys can search\nfor records.\n\nPause to play video\n\nAs you can see on screen, doing a simple name search in this portal routinely\ntakes 10 to 15 seconds\u2014or longer\u2014per query. In our discovery workshop with the\nclient, staff shared that under the new portal system, their record-pulling time\ngrew from 3 hours up to 10 hours per client. To make matters worse, while the\nsystem claims to offer fuzzy search matching, the underlying logic is poorly\nimplemented, ballooning an 6 item search result to 200+ results when selected.\nWhen enabled, it ends up matching too many false positives, rather than giving attorneys what they actually need.\nAnd because the new system caps the search results at 200 records, the risk of missing records is real."
       },
+      {},
       {
-        "speakerNotes": "So why is finding everyone so hard? In our case, we were dealing with a\ndatabase of over 50 million North Carolina court records, and searching by\nname in a dataset that size is not trivial.\n\nFirst, we're not just looking for a single record. We're looking for every\nrecord that belongs to a single person.\n\nSecond, if you think about the lifespan of a criminal record, one can imagine how\ntypos are frequent. A name might be typed on the side of the road by an\narresting officer, transcribed from a hand-written form by a busy court clerk,\nor supplied by a client who spells their name differently\nacross various legal documents, uses nicknames, or hyphenated names.\n\nOn top of that, name collisions are everywhere\u2014thousands of people share the\nexact same first and last name. And date of birth\u2014the one field that could\neasily disambiguate two people\u2014is sometimes missing in court data.\n\nWe realized that if we wanted to build a tool that truly served legal aid\norganizations, public defenders, and community advocates, we had to solve\nthe multi-million record fuzzy search problem using our tools of choice,\nDjango and PostgreSQL.\n\nTo talk more about that, I'll hand it off to Tobias."
+        "speakerNotes": "So why is finding everyone so hard? In our case, we were dealing with a\ndatabase of over 50 million North Carolina court records, and searching by\nname in a dataset that size is not trivial.\n\nFirst, we're not just looking for a single record. We're looking for every\nrecord that belongs to a single person.\n\nSecond, if you think about the lifespan of a criminal record, one can imagine how\ntypos are frequent. A name might be typed on the side of the road by an\narresting officer, transcribed from a hand-written form by a busy court clerk,\nor supplied by a client who spells their name differently\nacross various legal documents, uses nicknames....or hyphenated names.\n\nOn top of that, name collisions are everywhere\u2014thousands of people share the\nexact same first and last name. And date of birth\u2014the one field that could\neasily disambiguate two people\u2014is sometimes missing in court data.\n\nWe realized that if we wanted to build a tool that truly served legal aid\norganizations, public defenders, and community advocates, we had to solve\nthe multi-million record fuzzy search problem using our tools of choice,\nDjango and PostgreSQL.\n\nTo talk more about that, I'll hand it off to Tobias."
       },
       {
         "type": "slide",
@@ -72,8 +73,15 @@
         "type": "slide",
         "speakerNotes": "Finally--and this one is was also abundant on our project--it's easy to assume that names will be typed exactly and perfectly every time they're entered. This is not the case, and our dataset of 54M records provided ample evidence of this."
       },
-      {},
-      {},
+      {
+        "speakerNotes": "In production, the data is purchased from the North Carolina court system. For testing purposes, we generated a fake dataset that loosely matched the shape of the production data:\n\n- Sourced from ~1,000,000 last names and ~600,000 first names from Kaggle\n- Names are randomly weighted according to their precedence in the United States\n- Combined and assigned a random birth date\n- Each name appears from 1-80 times in the database, and has some typos injected"
+      },
+      {
+        "showCode": false
+      },
+      {
+        "speakerNotes": "The data dump we receive from the stateis NOT a clean, unified \"Person\" table. It is a list of\nraw court records. Every time a person's name gets entered into the\ncourts \u2014 different county, different clerk, different year \u2014 a new row is\ncreated. So the same real person shows up across many duplicated records,\noften with typos, nicknames, and aliases.\n\nThis is loosely what the data model looks, with a first name, last name, middle name, and date of birth field.\n\nWe added the person_id field for demonstration purposes to help us see if we tracked down all the records corresponding to that person or not.\n\nThat duplication is exactly why the search is hard: \"Amanda Morgan\" is\nnot one row we look up; it is a cluster of rows we have to find and\nde-duplicate."
+      },
       {},
       {
         "showCode": true
@@ -109,18 +117,29 @@
       {
         "showCode": true
       },
-      {
-        "showCode": true
-      },
-      {},
       {},
       {
         "showCode": true
       },
       {},
       {},
+      {
+        "speakerNotes": "For example"
+      },
+      {},
+      {
+        "type": "skip"
+      },
+      {
+        "showCode": true
+      },
       {},
       {},
+      {},
+      {},
+      {
+        "speakerNotes": "In summary, this is a hard problem! There is no magical combination of these algorithms that will solve all your search issues.\n\nOur goal with this project was to fine tune the a particular set of algoirthms, and enable our users to with a search that is super fast so they can quickly try different combinations or nicknames to find the cases they're looking for.\n\nAnd the fact the postgres can do this on my 3 year old laptop is awesome!"
+      },
       {}
     ],
     "deck": {

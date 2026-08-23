@@ -207,7 +207,12 @@ class TestTrigramVisibility:
     def test_main_list_has_no_default_ordering(self):
         """search_unified() runs without a default ORDER BY; page sort is the view's job."""
         dob = date(1990, 1, 1)
-        for first, last in [("Zed", "Zebra"), ("Ike", "Cherry"), ("Amy", "Apple"), ("Bob", "Berry")]:
+        for first, last in [
+            ("Zed", "Zebra"),
+            ("Ike", "Cherry"),
+            ("Amy", "Apple"),
+            ("Bob", "Berry"),
+        ]:
             CourtRecord.objects.create(first_name=first, last_name=last, date_of_birth=dob)
         results = CourtRecord.objects.search_unified(["legacy"], "", "e")
         assert {(p.first_name, p.last_name) for p in results} == {
@@ -224,7 +229,12 @@ class TestSearchUnifiedSortField:
 
     def _seed(self):
         # Shuffled DOBs so order is observable
-        for first, dob in [("Zed", "1992-06-15"), ("Ike", "1988-01-01"), ("Amy", "1995-12-31"), ("Bob", "1990-05-15")]:
+        for first, dob in [
+            ("Zed", "1992-06-15"),
+            ("Ike", "1988-01-01"),
+            ("Amy", "1995-12-31"),
+            ("Bob", "1990-05-15"),
+        ]:
             CourtRecord.objects.create(first_name=first, last_name="Smith", date_of_birth=dob)
 
     def test_sort_field_runs_sql_order_by(self):
@@ -251,6 +261,17 @@ class TestSearchUnifiedSortField:
             CourtRecord.objects.create(first_name="John", last_name=last, date_of_birth=other_dob)
         results = CourtRecord.objects.search_unified([], "", "", dob, sort_field="first_name")
         assert [p.last_name for p in results] == ["A", "B", "C"]
+
+    def test_legacy_mode_drops_sort_field(self):
+        """legacy's unindexed ILIKE + a DOB ORDER BY risks a catastrophic scan plan, so sort is dropped."""
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        self._seed()
+        with CaptureQueriesContext(connection) as ctx:
+            CourtRecord.objects.search_unified(["prefix", "legacy"], "", "Smith", sort_field="-date_of_birth")
+        main_sql = next(q["sql"] for q in ctx.captured_queries if "records_courtrecord" in q["sql"])
+        assert "ORDER BY" not in main_sql
 
 
 @pytest.mark.django_db
@@ -366,35 +387,35 @@ class TestPhoneticGroup:
 
     TEMPLATES = {
         "soundex": (
-            "SOUNDEX(UPPER(first_name)) = SOUNDEX(%s)",
-            "SOUNDEX(UPPER(last_name)) = SOUNDEX(%s)",
+            "SOUNDEX(first_name) = SOUNDEX(%s)",
+            "SOUNDEX(last_name) = SOUNDEX(%s)",
         ),
         "dm": (
-            "DAITCH_MOKOTOFF(UPPER(first_name)) && DAITCH_MOKOTOFF(%s)",
-            "DAITCH_MOKOTOFF(UPPER(last_name)) && DAITCH_MOKOTOFF(%s)",
+            "DAITCH_MOKOTOFF(first_name) && DAITCH_MOKOTOFF(%s)",
+            "DAITCH_MOKOTOFF(last_name) && DAITCH_MOKOTOFF(%s)",
         ),
     }
 
     @pytest.mark.parametrize("mode", ["soundex", "dm"])
     def test_both_names(self, mode):
         fn_tpl, ln_tpl = self.TEMPLATES[mode]
-        sql, params = _phonetic_group(fn_tpl, ln_tpl, "John", "Smith", "JOHN", "SMITH")
+        sql, params = _phonetic_group(fn_tpl, ln_tpl, "John", "Smith", "John", "Smith")
         assert sql == f"({fn_tpl}) AND ({ln_tpl})"
-        assert params == ["JOHN", "SMITH"]
+        assert params == ["John", "Smith"]
 
     @pytest.mark.parametrize("mode", ["soundex", "dm"])
     def test_first_name_only(self, mode):
         fn_tpl, _ = self.TEMPLATES[mode]
-        sql, params = _phonetic_group(*self.TEMPLATES[mode], "John", "", "JOHN", "")
+        sql, params = _phonetic_group(*self.TEMPLATES[mode], "John", "", "John", "")
         assert sql == fn_tpl
-        assert params == ["JOHN"]
+        assert params == ["John"]
 
     @pytest.mark.parametrize("mode", ["soundex", "dm"])
     def test_last_name_only(self, mode):
         _, ln_tpl = self.TEMPLATES[mode]
-        sql, params = _phonetic_group(*self.TEMPLATES[mode], "", "Smith", "", "SMITH")
+        sql, params = _phonetic_group(*self.TEMPLATES[mode], "", "Smith", "", "Smith")
         assert sql == ln_tpl
-        assert params == ["SMITH"]
+        assert params == ["Smith"]
 
     @pytest.mark.parametrize("mode", ["soundex", "dm"])
     def test_no_names(self, mode):

@@ -39,6 +39,14 @@ DEBUG = env("DEBUG")
 
 ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["*"])
 
+# Required for the admin login (and any session use) to work over HTTPS.
+CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
+
+# Only mark cookies Secure when running over HTTPS in production; local HTTP
+# development (DEBUG=True) still needs to send cookies without it.
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+
 
 # Application definition
 
@@ -52,23 +60,33 @@ INSTALLED_APPS = [
     "django.contrib.postgres",
     # Local apps
     "records",
-    # Debug toolbar
-    "debug_toolbar",
-    # Deployment
-    "django_simple_deploy",
 ]
+
+# Development-only tools: enabled only when DEBUG is on.
+# The deployed image is built with --no-dev, so these packages are absent
+# there anyway; the DEBUG gate keeps settings honest in both cases.
+if DEBUG:
+    INSTALLED_APPS += [
+        # Debug toolbar
+        "debug_toolbar",
+        # Deployment
+        "django_simple_deploy",
+    ]
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    # Debug toolbar (must be after CommonMiddleware)
-    "debug_toolbar.middleware.DebugToolbarMiddleware",
 ]
+
+if DEBUG:
+    # Must be after CommonMiddleware
+    MIDDLEWARE.append("debug_toolbar.middleware.DebugToolbarMiddleware")
 
 ROOT_URLCONF = "fuzzy_demo.urls"
 
@@ -135,6 +153,10 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# WhiteNoise serves static files from STATIC_ROOT in production.
+# (Compressed variants are optional for this small demo app.)
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

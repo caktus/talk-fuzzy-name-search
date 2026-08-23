@@ -1,0 +1,21 @@
+roles:
+  - src: https://github.com/geerlingguy/ansible-role-postgresql
+    name: geerlingguy.postgresql
+    version: 4.0.3
+  - src: https://github.com/galaxyproject/ansible-postgresql-objects
+    name: galaxyproject.postgresql_objects
+    version: 1.2.1
+  - src: https://github.com/caktus/ansible-role-podman-containers
+    name: caktus.podman_containers
+    version: "2.0"
+  - src: https://github.com/geerlingguy/ansible-role-swap
+    name: geerlingguy.swap
+    version: 2.0.0
+collections:
+  - name: hifis.toolkit
+    source: https://galaxy.ansible.com
+    version: "6.3.2"
+  - name: maxhoesel.caddy
+    type: git
+    source: git+https://github.com/maxhoesel-ansible/ansible-collection-caddy
+    version: v6.1.0

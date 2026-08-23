@@ -15,13 +15,7 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 
-try:
-    import debug_toolbar
-
-    HAS_DEBUG_TOOLBAR = True
-except ImportError:
-    HAS_DEBUG_TOOLBAR = False
-
+from django.conf import settings
 from django.contrib import admin
 from django.urls import include, path
 
@@ -30,5 +24,14 @@ urlpatterns = [
     path("", include(("records.urls", "records"), namespace="records")),
 ]
 
-if HAS_DEBUG_TOOLBAR:
-    urlpatterns.insert(0, path("__debug__/", include(debug_toolbar.urls)))
+if "debug_toolbar" in settings.INSTALLED_APPS:
+    # settings.py adds debug_toolbar to INSTALLED_APPS only when DEBUG is
+    # on, and the deployed --no-dev image does not ship the package. Gate
+    # on INSTALLED_APPS (rather than DEBUG directly) because the URLconf
+    # is imported lazily, after tests have overridden DEBUG.
+    try:
+        import debug_toolbar
+
+        urlpatterns.insert(0, path("__debug__/", include(debug_toolbar.urls)))
+    except ImportError:  # pragma: no cover - depends on install state
+        pass

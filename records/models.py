@@ -51,11 +51,11 @@ MATCH_SOURCE_BITS = {
 _MATCH_SOURCE_MODES = {
     "prefix": (MATCH_SOURCE_BITS["prefix"], "UPPER({field}) LIKE %s", lambda v: v.upper() + "%"),
     "legacy": (MATCH_SOURCE_BITS["legacy"], "{field} ILIKE %s", lambda v: "%" + v + "%"),
-    "soundex": (MATCH_SOURCE_BITS["soundex"], "SOUNDEX(UPPER({field})) = SOUNDEX(%s)", lambda v: v.upper()),
+    "soundex": (MATCH_SOURCE_BITS["soundex"], "SOUNDEX({field}) = SOUNDEX(%s)", lambda v: v),
     "dm": (
         MATCH_SOURCE_BITS["dm"],
-        "DAITCH_MOKOTOFF(UPPER({field})) && DAITCH_MOKOTOFF(%s)",
-        lambda v: v.upper(),
+        "DAITCH_MOKOTOFF({field}) && DAITCH_MOKOTOFF(%s)",
+        lambda v: v,
     ),
 }
 
@@ -119,9 +119,6 @@ def build_unified_filter(modes: list[str], first_name: str, last_name: str) -> Q
 
     Returns an empty Q() when no base mode can build a condition.
     """
-    fn_upper = first_name.upper() if first_name else ""
-    ln_upper = last_name.upper() if last_name else ""
-
     q = Q()
 
     if "prefix" in modes:
@@ -144,24 +141,24 @@ def build_unified_filter(modes: list[str], first_name: str, last_name: str) -> Q
 
     if "soundex" in modes:
         sql, params = _phonetic_group(
-            "SOUNDEX(UPPER(first_name)) = SOUNDEX(%s)",
-            "SOUNDEX(UPPER(last_name)) = SOUNDEX(%s)",
+            "SOUNDEX(first_name) = SOUNDEX(%s)",
+            "SOUNDEX(last_name) = SOUNDEX(%s)",
             first_name,
             last_name,
-            fn_upper,
-            ln_upper,
+            first_name,
+            last_name,
         )
         if sql:
             q |= ExpressionWrapper(RawSQL(sql, params), output_field=BooleanField())
 
     if "dm" in modes:
         sql, params = _phonetic_group(
-            "DAITCH_MOKOTOFF(UPPER(first_name)) && DAITCH_MOKOTOFF(%s)",
-            "DAITCH_MOKOTOFF(UPPER(last_name)) && DAITCH_MOKOTOFF(%s)",
+            "DAITCH_MOKOTOFF(first_name) && DAITCH_MOKOTOFF(%s)",
+            "DAITCH_MOKOTOFF(last_name) && DAITCH_MOKOTOFF(%s)",
             first_name,
             last_name,
-            fn_upper,
-            ln_upper,
+            first_name,
+            last_name,
         )
         if sql:
             q |= ExpressionWrapper(RawSQL(sql, params), output_field=BooleanField())
@@ -174,8 +171,8 @@ def _phonetic_group(
     ln_template: str,
     first_name: str,
     last_name: str,
-    fn_upper: str,
-    ln_upper: str,
+    fn_param: str,
+    ln_param: str,
 ) -> tuple[str | None, list]:
     """Build one AND-ed phonetic SQL group (soundex/dm branch of build_unified_filter).
 
@@ -184,11 +181,11 @@ def _phonetic_group(
     fn_part = fn_template if first_name else None
     ln_part = ln_template if last_name else None
     if fn_part and ln_part:
-        return f"({fn_part}) AND ({ln_part})", [fn_upper, ln_upper]
+        return f"({fn_part}) AND ({ln_part})", [fn_param, ln_param]
     if fn_part:
-        return fn_part, [fn_upper]
+        return fn_part, [fn_param]
     if ln_part:
-        return ln_part, [ln_upper]
+        return ln_part, [ln_param]
     return None, []
 
 
@@ -205,12 +202,18 @@ def build_levenshtein_filter_q(first_name: str, last_name: str) -> Q:
     lev_q = Q()
     if first_name:
         lev_q &= ExpressionWrapper(
-            RawSQL("levenshtein_less_equal(UPPER(first_name), %s, 2) <= 2", [first_name.upper()]),
+            RawSQL(
+                "levenshtein_less_equal(UPPER(first_name), %s, 2) <= 2",
+                [first_name.upper()],
+            ),
             output_field=BooleanField(),
         )
     if last_name:
         lev_q &= ExpressionWrapper(
-            RawSQL("levenshtein_less_equal(UPPER(last_name), %s, 2) <= 2", [last_name.upper()]),
+            RawSQL(
+                "levenshtein_less_equal(UPPER(last_name), %s, 2) <= 2",
+                [last_name.upper()],
+            ),
             output_field=BooleanField(),
         )
     return lev_q
@@ -299,7 +302,9 @@ class CourtRecordQuerySet(models.QuerySet):
 
         # Page sort (e.g. ?sort=dob_asc) applied as a SQL ORDER BY on the
         # base query; empty = no ORDER BY (fastest plan, DB order).
-        order_clause = (sort_field,) if sort_field else ()
+        # Dropped when legacy is enabled: ORDER BY on an unindexed ILIKE OR-branch
+        # can make Postgres pick a catastrophic DOB-index-ordered scan plan.
+        order_clause = (sort_field,) if sort_field and "legacy" not in modes else ()
 
         # Levenshtein may run standalone: when no base mode builds a condition
         # but Levenshtein is selected with a name, the edit-distance check IS
@@ -430,11 +435,11 @@ class CourtRecord(models.Model):
         indexes = [
             # Functional B-tree indexes for SOUNDEX equality comparisons
             models.Index(
-                models.Func(models.F("first_name"), function="SOUNDEX", template="SOUNDEX(UPPER(%(expressions)s))"),
+                models.Func(models.F("first_name"), function="SOUNDEX", template="SOUNDEX(%(expressions)s)"),
                 name="idx_person_first_name_soundex",
             ),
             models.Index(
-                models.Func(models.F("last_name"), function="SOUNDEX", template="SOUNDEX(UPPER(%(expressions)s))"),
+                models.Func(models.F("last_name"), function="SOUNDEX", template="SOUNDEX(%(expressions)s)"),
                 name="idx_person_last_name_soundex",
             ),
             # Functional GIN indexes for DAITCH_MOKOTOFF array overlap (&&)
@@ -442,7 +447,7 @@ class CourtRecord(models.Model):
                 models.Func(
                     models.F("first_name"),
                     function="DAITCH_MOKOTOFF",
-                    template="DAITCH_MOKOTOFF(UPPER(%(expressions)s))",
+                    template="DAITCH_MOKOTOFF(%(expressions)s)",
                 ),
                 name="idx_person_first_name_dm",
             ),
@@ -450,7 +455,7 @@ class CourtRecord(models.Model):
                 models.Func(
                     models.F("last_name"),
                     function="DAITCH_MOKOTOFF",
-                    template="DAITCH_MOKOTOFF(UPPER(%(expressions)s))",
+                    template="DAITCH_MOKOTOFF(%(expressions)s)",
                 ),
                 name="idx_person_last_name_dm",
             ),

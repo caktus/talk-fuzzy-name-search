@@ -1,0 +1,383 @@
+---
+# Set up and deploy the talk-fuzzy-name-search app on a single DigitalOcean
+# droplet. Everything on the server is managed by this playbook (no manual
+# server edits).
+#
+# Usage (from the repo root, with the dev uv group installed — the default
+# `uv sync` includes ansible):
+#   cd deployment
+#   uv run ansible-galaxy install -fr requirements.yaml   # first time
+#   uv run ansible-playbook setup.yaml                    # everything
+#   uv run ansible-playbook setup.yaml -t app             # one tag
+#
+# Plays run in the order they appear below; that order is also a valid
+# first-run order for provisioning a brand-new droplet. Tag them to run a
+# single play. (See deployment/README.md.)
+#
+# Tags, in play order:
+#   common, postgres, podman_user, secrets, postgres_objects, git_key, app, caddy
+
+- name: Base system (unattended upgrades, swap, timezone, firewall)
+  hosts: app
+  tags: [common]
+  gather_facts: yes
+  become: yes
+  vars:
+    swap_file_size_mb: 2048
+  roles:
+    - role: hifis.toolkit.unattended_upgrades
+    - role: geerlingguy.swap
+  tasks:
+    - name: Set timezone
+      community.general.timezone:
+        name: America/New_York
+
+    - name: Install packages
+      ansible.builtin.apt:
+        name:
+          - ufw
+          - acl
+          - git
+        state: present
+        update_cache: yes
+
+    - name: Set UFW default policies
+      community.general.ufw:
+        direction: "{{ item.direction }}"
+        policy: "{{ item.policy }}"
+      loop:
+        - { direction: "incoming", policy: "deny" }
+        - { direction: "outgoing", policy: "allow" }
+
+    - name: Allow public ports for the web server
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop: "{{ app_public_ports }}"
+
+    - name: Enable UFW
+      community.general.ufw:
+        state: enabled
+
+- name: PostgreSQL (install and configure)
+  hosts: postgres
+  tags: [postgres]
+  gather_facts: yes
+  become: yes
+  pre_tasks:
+    # PostgreSQL 18 comes from the PGDG repo, not Ubuntu's default. If a PGDG
+    # repo is already present (e.g. provisioned out-of-band), don't add a
+    # duplicate; otherwise add the deb822 form.
+    - name: Check for a pre-existing PGDG repository
+      ansible.builtin.command: grep -rl --exclude=postgresql.sources apt.postgresql.org /etc/apt/sources.list.d/
+      register: pgdg_existing
+      changed_when: false
+      failed_when: false
+
+    - name: Remove PGDG repository entry added by this playbook
+      ansible.builtin.deb822_repository:
+        name: postgresql
+        types: deb
+        uris: http://apt.postgresql.org/pub/repos/apt/
+        suites: "{{ ansible_facts['distribution_release'] }}-pgdg"
+        components: main
+        signed_by: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+        state: absent
+      when: pgdg_existing.stdout | length > 0
+
+    - name: Add PGDG repository
+      ansible.builtin.deb822_repository:
+        name: postgresql
+        types: deb
+        uris: http://apt.postgresql.org/pub/repos/apt/
+        suites: "{{ ansible_facts['distribution_release'] }}-pgdg"
+        components: main
+        signed_by: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+        state: present
+      when: pgdg_existing.stdout | length == 0
+      notify: Update apt cache
+
+    # Containers reach the host's PostgreSQL through a dedicated loopback
+    # alias IP (mirrors the recordsdb deployment).
+    - name: Create systemd unit for loopback alias
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/lo-alias.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Setup Loopback Alias IP ({{ database_host_ip }})
+          After=network.target
+          Before=postgresql@{{ postgresql_version }}-main.service
+
+          [Service]
+          Type=oneshot
+          ExecStart=/sbin/ip addr add {{ database_host_ip }}/32 dev lo
+          ExecStop=/sbin/ip addr del {{ database_host_ip }}/32 dev lo
+          RemainAfterExit=yes
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload systemd and enable lo-alias service
+      ansible.builtin.systemd_service:
+        name: lo-alias
+        daemon_reload: yes
+        enabled: yes
+        state: started
+
+    # Ensure PostgreSQL always starts after the loopback alias exists, even
+    # on reboots where systemd would otherwise start both units in parallel.
+    - name: Create systemd drop-in directory for PostgreSQL
+      ansible.builtin.file:
+        path: /etc/systemd/system/postgresql@{{ postgresql_version }}-main.service.d
+        state: directory
+        mode: "0755"
+
+    - name: Create systemd drop-in to order PostgreSQL after the loopback alias
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/postgresql@{{ postgresql_version }}-main.service.d/lo-alias.conf
+        mode: "0644"
+        content: |
+          [Unit]
+          After=lo-alias.service
+          Requires=lo-alias.service
+      notify: Reload systemd
+  roles:
+    - role: geerlingguy.postgresql
+  handlers:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+
+    - name: Reload systemd
+      ansible.builtin.systemd_service:
+        daemon_reload: yes
+
+- name: Podman and the app user
+  hosts: app
+  tags: [podman_user]
+  gather_facts: no
+  become: yes
+  tasks:
+    - name: Create the app/podman user
+      ansible.builtin.user:
+        name: "{{ podman_user }}"
+        create_home: yes
+        state: present
+
+    - name: Install podman package
+      ansible.builtin.apt:
+        name: podman
+        state: present
+        update_cache: yes
+
+    - name: Ensure podman group exists
+      ansible.builtin.group:
+        name: podman
+
+    - name: Add app user to podman group
+      ansible.builtin.user:
+        name: "{{ podman_user }}"
+        groups: podman
+        append: yes
+
+    - name: Enable linger for app user (containers start at boot)
+      ansible.builtin.command:
+        cmd: "loginctl enable-linger {{ podman_user }}"
+      args:
+        creates: "/var/lib/systemd/linger/{{ podman_user }}"
+
+- name: Deployment secrets (generated once, on first run)
+  hosts: app
+  tags: [secrets]
+  gather_facts: no
+  become: yes
+  tasks:
+    # The generated secrets must be readable by both the app user (the app
+    # play) and postgres (the postgres_objects play), so they live in a
+    # root-owned file in the 'deploy' group only those users share.
+    - name: Ensure deploy group exists
+      ansible.builtin.group:
+        name: deploy
+
+    - name: Add users to deploy group
+      ansible.builtin.user:
+        name: "{{ item }}"
+        groups: deploy
+        append: yes
+      loop:
+        - "{{ podman_user }}"
+        - postgres
+
+    - name: Ensure deploy env directory exists
+      ansible.builtin.file:
+        path: "{{ deploy_env_file | dirname }}"
+        state: directory
+        owner: root
+        group: deploy
+        mode: "0750"
+
+    - name: Check for existing deploy env file
+      ansible.builtin.stat:
+        path: "{{ deploy_env_file }}"
+      register: deploy_env_stat
+
+    - name: Write deploy env file with generated secrets (first run only)
+      ansible.builtin.copy:
+        dest: "{{ deploy_env_file }}"
+        owner: root
+        group: deploy
+        mode: "0640"
+        content: |
+          # Generated by the deployment playbook on first run.
+          # Do not edit by hand. Delete this file and re-run the
+          # 'secrets' tag to regenerate the secrets.
+          DJANGO_SECRET_KEY={{ lookup('password', '/dev/null chars=ascii_letters,digits length=50') }}
+          DATABASE_PASSWORD={{ lookup('password', '/dev/null chars=ascii_letters,digits length=32') }}
+      when: not deploy_env_stat.stat.exists
+
+    - name: Ensure deploy env file ownership and mode
+      ansible.builtin.file:
+        path: "{{ deploy_env_file }}"
+        owner: root
+        group: deploy
+        mode: "0640"
+
+- name: PostgreSQL users and database (idempotent)
+  hosts: postgres
+  tags: [postgres_objects]
+  gather_facts: no
+  become: yes
+  become_user: postgres
+  pre_tasks:
+    - name: Load deployment env
+      import_tasks: tasks-load-deploy-env.yml
+  roles:
+    - role: galaxyproject.postgresql_objects
+
+- name: GitHub deploy key (private repo checkout)
+  hosts: app
+  tags: [git_key]
+  gather_facts: no
+  become: yes
+  vars:
+    github_key_dir: "{{ deploy_env_file | dirname }}"
+  tasks:
+    - name: Generate GitHub deploy key pair (first run only)
+      ansible.builtin.command:
+        cmd: >-
+          ssh-keygen -t ed25519 -N ""
+          -C "talk-fuzzy-name-search-deploy"
+          -f {{ github_key_dir }}/github_deploy
+      args:
+        creates: "{{ github_key_dir }}/github_deploy"
+      register: github_key_generated
+
+    - name: Set permissions on private deploy key
+      ansible.builtin.file:
+        path: "{{ github_key_dir }}/github_deploy"
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Set permissions on public deploy key
+      ansible.builtin.file:
+        path: "{{ github_key_dir }}/github_deploy.pub"
+        owner: root
+        group: deploy
+        mode: "0640"
+
+    - name: Read public key
+      ansible.builtin.slurp:
+        src: "{{ github_key_dir }}/github_deploy.pub"
+      register: github_key_pub_raw
+
+    - name: Print public key to add to GitHub (first run only)
+      ansible.builtin.debug:
+        msg: |
+          ONE-TIME STEP: add this key to the GitHub repo
+          (Settings -> Deploy keys -> Add deploy key, read-only):
+
+          {{ github_key_pub_raw.content | b64decode }}
+      when: github_key_generated.changed
+
+    # Install the private key for the app user
+    - name: Ensure app user .ssh directory
+      ansible.builtin.file:
+        path: "{{ podman_user_home }}/.ssh"
+        state: directory
+        owner: "{{ podman_user }}"
+        group: "{{ podman_user }}"
+        mode: "0700"
+
+    - name: Install GitHub deploy key for app user
+      ansible.builtin.copy:
+        src: "{{ github_key_dir }}/github_deploy"
+        dest: "{{ podman_user_home }}/.ssh/id_github_deploy"
+        owner: "{{ podman_user }}"
+        group: "{{ podman_user }}"
+        mode: "0600"
+        remote_src: yes
+
+    - name: Ensure ssh config file exists
+      ansible.builtin.file:
+        path: "{{ podman_user_home }}/.ssh/config"
+        state: touch
+        owner: "{{ podman_user }}"
+        group: "{{ podman_user }}"
+        mode: "0600"
+
+    - name: Configure ssh to use the deploy key for github.com
+      ansible.builtin.blockinfile:
+        path: "{{ podman_user_home }}/.ssh/config"
+        owner: "{{ podman_user }}"
+        group: "{{ podman_user }}"
+        mode: "0600"
+        marker: "# {mark} ANSIBLE MANAGED github deploy key"
+        block: |
+          Host github.com
+            IdentityFile ~/.ssh/id_github_deploy
+            IdentitiesOnly yes
+
+- name: App (build image, run gunicorn container)
+  hosts: app
+  tags: [app]
+  gather_facts: no
+  become: yes
+  become_user: "{{ podman_user }}"
+  environment:
+    HOME: "{{ podman_user_home }}"
+  pre_tasks:
+    - name: Load deployment env
+      import_tasks: tasks-load-deploy-env.yml
+  roles:
+    - role: caktus.podman_containers
+  post_tasks:
+    - name: Prune images older than 24h
+      containers.podman.podman_prune:
+        image: true
+        image_filters:
+          until: 24h
+          dangling_only: false
+
+- name: Caddy web server (automatic HTTPS for the domain)
+  hosts: caddy
+  tags: [caddy]
+  gather_facts: no
+  become: yes
+  pre_tasks:
+    # The caddy role's argument spec defaults reference ansible_facts, and
+    # ansible auto-generates an 'always'-tagged task to validate them — so
+    # it runs under ANY -t selection, even when this play's own tasks are
+    # filtered out. Gather facts explicitly (tagged 'always') so the
+    # validation has them, and exactly once.
+    - name: Gather facts for role argument spec validation
+      ansible.builtin.setup:
+      tags: [always]
+  roles:
+    - role: maxhoesel.caddy.caddy_server
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: yes

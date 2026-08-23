@@ -1,0 +1,49 @@
+---
+### Shared configuration ###
+
+### Application / git ###
+# Branch the deployment builds the image from on the droplet.
+git_branch: main
+
+# Domain served by Caddy (automatic Let's Encrypt HTTPS).
+# The A record for this domain points at the droplet's public IP.
+env_allowed_hosts:
+  - fuzzy-demo.caktus-built.com
+
+# Public IP of the droplet, served over plain HTTP alongside the TLS domain.
+app_public_host: 24.199.85.83
+
+# Ports open to the world (UFW). SSH on 22; Caddy binds 80 (ACME + redirect) and 443.
+app_public_ports: [22, 80, 443]
+
+### Unattended upgrades (hifis.toolkit.unattended_upgrades) ###
+unattended_origins_patterns:
+  - "origin=Ubuntu,archive=${distro_codename}-security"
+  - "o=Ubuntu,a=${distro_codename}"
+  - "o=Ubuntu,a=${distro_codename}-updates"
+  - "origin=apt.postgresql.org,archive=${distro_codename}-pgdg"
+unattended_automatic_reboot: true
+unattended_automatic_reboot_time: "02:00"
+unattended_remove_unused_dependencies: true
+unattended_systemd_timer_override: true
+unattended_apt_daily_oncalendar: "*-*-* 0:00"
+unattended_apt_daily_randomizeddelaysec: "60m"
+unattended_apt_daily_upgrade_oncalendar: "*-*-* 2:00"
+unattended_apt_daily_upgrade_randomizeddelaysec: "0"
+
+### Deployment secrets ###
+# Root-owned file holding the generated secrets (DJANGO_SECRET_KEY,
+# DATABASE_PASSWORD). Created by the 'secrets' tag on first run.
+deploy_env_file: "/etc/talk-fuzzy-name-search/deploy.env"
+
+### Database configuration ###
+# Containers reach the host's PostgreSQL through a dedicated loopback
+# alias IP (see the lo-alias.service created in setup.yaml), mirroring
+# the recordsdb deployment.
+database_host_ip: 10.99.0.1
+database_user: django_user
+database_name: fuzzy_demo
+
+# The app's gunicorn container listens on this port inside the podman
+# network; it is published to 127.0.0.1 only, where Caddy proxies it.
+app_port: 8000

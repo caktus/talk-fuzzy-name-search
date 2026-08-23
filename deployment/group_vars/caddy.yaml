@@ -1,0 +1,38 @@
+---
+### maxhoesel.caddy.caddy_server role configuration ###
+
+# Install/manage Caddy from the caddy apt package (cloudsmith stable repo)
+# and configure it from a Caddyfile.
+caddy_config_mode: Caddyfile
+
+# Full Caddyfile.
+# - The droplet's public IP is not a real site: it just redirects to the
+#   HTTPS domain (no automatic HTTPS for IP addresses, and it never
+#   reaches the app, so the IP doesn't need to be in ALLOWED_HOSTS).
+# - The domain gets automatic Let's Encrypt TLS (HTTP-01; the A record
+#   points at the droplet IP and Caddy binds :80 implicitly for ACME).
+caddy_caddyfile: |
+  {
+      # No Caddy admin API on this box.
+      admin off
+  }
+
+  http://{{ app_public_host }} {
+      redir https://{{ env_allowed_hosts | first }}{uri} 301
+  }
+
+  {% for host in env_allowed_hosts %}
+  {{ host }} {
+      encode zstd gzip
+
+      # Security headers (parity with recordsdb's Traefik middlewares)
+      header {
+          Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+          X-Content-Type-Options nosniff
+          X-Frame-Options DENY
+          Referrer-Policy strict-origin-when-cross-origin
+      }
+
+      reverse_proxy 127.0.0.1:{{ app_port }}
+  }
+  {% endfor %}

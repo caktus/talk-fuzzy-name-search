@@ -642,8 +642,8 @@ class Command(BaseCommand):
         with connection.cursor() as cursor:
             cursor.execute("""
                 SELECT p.first_name, p.last_name, p.date_of_birth,
-                       SOUNDEX(UPPER(p.first_name)) as fn_soundex,
-                       SOUNDEX(UPPER(p.last_name)) as ln_soundex
+                       SOUNDEX(p.first_name) as fn_soundex,
+                       SOUNDEX(p.last_name) as ln_soundex
                 FROM records_courtrecord p
                 ORDER BY fn_soundex, ln_soundex
                 LIMIT 10000

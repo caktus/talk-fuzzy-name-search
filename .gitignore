@@ -229,6 +229,10 @@ __marimo__/
 dsd-kind/
 helm-charts/
 
+# Ansible roles/collections installed from deployment/requirements.yaml
+deployment/roles/
+deployment/collections/
+
 # Session/docs not for VCS
 .pi/
 data/
