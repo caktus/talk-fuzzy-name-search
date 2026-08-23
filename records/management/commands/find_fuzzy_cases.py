@@ -40,6 +40,7 @@ Usage:
     python manage.py find_fuzzy_cases --limit 3 --seed 7  # 3 matches, different shuffle
     python manage.py find_fuzzy_cases --min-false-positives 50
     python manage.py find_fuzzy_cases --allow-missed      # relax exactness (see below)
+    python manage.py find_fuzzy_cases --lev-misses 2      # search must miss 2+ real rows
     python manage.py find_fuzzy_cases --print-sql > demo.sql
 
 Exactness modes:
@@ -50,6 +51,16 @@ Exactness modes:
                        DM is allowed to be missed by the search; the 3-5-typo
                        criterion then applies to the typos that do match
                        phonetically. No false positives are ever allowed.
+    --lev-misses N:    the false-negative demo. Instead of demanding an exact
+                       result set, the search must MISS at least N of the
+                       person's own rows; each missed row is reported with its
+                       cause ('levenshtein: edit distance > 2', or 'broken
+                       phonetic codes'). No false positives are allowed, and
+                       the 3-5 phonetic typos / min-false-positives criteria
+                       still apply. Note: the seeded data injects at most one
+                       edit per row (a transposition is 2 in Levenshtein
+                       terms), so genuinely levenshtein-caused misses only
+                       appear in data with multi-edit typos.
 """
 
 from __future__ import annotations
@@ -83,29 +94,42 @@ FROM canonical_spellings
 
 # ---------------------------------------------------------------------------
 # Stage 2: batched cluster check. The candidate list is inlined as a VALUES
-# CTE and joined to the clusters on person_id (indexed). For each candidate
-# we count total cluster rows, typo rows (spelling != canonical), and the
-# typos that still match via soundex and/or daitch-mokotoff -- so candidates
-# that cannot reach 3-5 phonetic typos are dropped before any phonetic scan.
+# CTE and joined to the clusters on person_id (indexed). A per-row CTE flags
+# each cluster row once, so for every candidate we count: total cluster rows,
+# typo rows (spelling != canonical), the typos that still match via soundex
+# and/or daitch-mokotoff, and the rows the final search will MISS (typo rows
+# whose codes both broke, or whose edit distance exceeds the Levenshtein
+# cutoff). Candidates that cannot satisfy the typo/miss criteria are dropped
+# before any phonetic scan runs.
 # ---------------------------------------------------------------------------
 CLUSTER_CHECK_SQL = """
 WITH candidates(first_name, last_name, person_id) AS MATERIALIZED (
     VALUES {values}
+),
+cluster_rows AS MATERIALIZED (
+    SELECT c.person_id,
+           (r.first_name <> c.first_name OR r.last_name <> c.last_name)    AS is_typo,
+           (SOUNDEX(UPPER(r.first_name)) = SOUNDEX(c.first_name)
+              AND SOUNDEX(UPPER(r.last_name)) = SOUNDEX(c.last_name))      AS soundex_match,
+           (DAITCH_MOKOTOFF(UPPER(r.first_name)) && DAITCH_MOKOTOFF(c.first_name)
+              AND DAITCH_MOKOTOFF(UPPER(r.last_name)) && DAITCH_MOKOTOFF(c.last_name))
+                                                                           AS dm_match,
+           levenshtein(UPPER(r.first_name), UPPER(c.first_name))          AS fn_distance,
+           levenshtein(UPPER(r.last_name), UPPER(c.last_name))            AS ln_distance
+    FROM candidates c
+    JOIN records_courtrecord r ON r.person_id = c.person_id
 )
-SELECT candidates.person_id,
-       count(*) AS cluster_n,
-       count(*) FILTER (WHERE r.first_name <> candidates.first_name OR r.last_name <> candidates.last_name)
-                                                        AS typo_n,
+SELECT person_id,
+       count(*)                                                    AS cluster_n,
+       count(*) FILTER (WHERE is_typo)                             AS typo_n,
+       count(*) FILTER (WHERE is_typo AND (soundex_match OR dm_match))
+                                                                    AS phonetic_typo_n,
        count(*) FILTER (
-           WHERE (r.first_name <> candidates.first_name OR r.last_name <> candidates.last_name)
-             AND ((SOUNDEX(UPPER(r.first_name)) = SOUNDEX(candidates.first_name)
-                   AND SOUNDEX(UPPER(r.last_name)) = SOUNDEX(candidates.last_name))
-               OR (DAITCH_MOKOTOFF(UPPER(r.first_name)) && DAITCH_MOKOTOFF(candidates.first_name)
-                   AND DAITCH_MOKOTOFF(UPPER(r.last_name)) && DAITCH_MOKOTOFF(candidates.last_name)))
-       )                                               AS phonetic_typo_n
-FROM candidates
-JOIN records_courtrecord r ON r.person_id = candidates.person_id
-GROUP BY candidates.person_id
+           WHERE is_typo
+             AND (NOT (soundex_match OR dm_match) OR fn_distance > 2 OR ln_distance > 2)
+       )                                                           AS missed_n
+FROM cluster_rows
+GROUP BY person_id
 """
 
 # ---------------------------------------------------------------------------
@@ -234,6 +258,17 @@ class Command(BaseCommand):
             ),
         )
         parser.add_argument(
+            "--lev-misses",
+            type=int,
+            default=0,
+            help=(
+                "False-negative demo: require the final phonetic + Levenshtein search to MISS "
+                "at least N of the person's own rows (0 = off). Each missed row is labeled "
+                "with its cause: 'levenshtein' when the typo is more than 2 edits from the "
+                "canonical spelling, 'phonetic codes' when the typo broke both soundex and DM."
+            ),
+        )
+        parser.add_argument(
             "--print-sql",
             action="store_true",
             help="Also print a standalone psql script reproducing each match's result sets",
@@ -270,9 +305,13 @@ class Command(BaseCommand):
         # Stage 2: batched cluster check (typo counts + phonetic survival).
         self.stdout.write("Stage 2: checking cluster typos in batches...")
         survivors = self._cluster_check(candidates, options)
+        if options["lev_misses"]:
+            mode_note = f" and the search misses >= {options['lev_misses']} real row(s)"
+        else:
+            mode_note = "" if options["allow_missed"] else " (all typos phonetic, strict mode)"
         self.stdout.write(
             f"  {len(survivors):,} candidates have {options['min_typos']}-{options['max_typos']} "
-            f"phonetically-matching typos" + ("" if options["allow_missed"] else " (all typos phonetic, strict mode)")
+            f"phonetically-matching typos{mode_note}"
         )
 
         # Random, reproducible order; early stop in stage 3 after --limit hits.
@@ -287,13 +326,13 @@ class Command(BaseCommand):
             self.stdout.write(
                 self.style.WARNING(
                     "No candidates matched. Try --seed <other>, --min-false-positives <lower>, "
-                    "--max-candidates <higher>, or --allow-missed."
+                    "--max-candidates <higher>, --allow-missed, or --lev-misses 1."
                 )
             )
             return
 
         self.stdout.write("")
-        self._print_matches(matches, options["allow_missed"])
+        self._print_matches(matches, options)
         if options["print_sql"]:
             self._print_sql(matches)
 
@@ -321,18 +360,24 @@ class Command(BaseCommand):
                 rows = cursor.fetchall()
 
             by_pid = {
-                str(person_id): (cluster_n, typo_n, phonetic_typo_n)
-                for person_id, cluster_n, typo_n, phonetic_typo_n in rows
+                str(person_id): (cluster_n, typo_n, phonetic_typo_n, missed_n)
+                for person_id, cluster_n, typo_n, phonetic_typo_n, missed_n in rows
             }
             for first_name, last_name, canonical_n, person_id in chunk:
                 counts = by_pid.get(str(person_id))
                 if counts is None:
                     continue
-                cluster_n, typo_n, phonetic_typo_n = counts
-                # Strict mode: every typo row must be phonetic (then typo_n IS the
-                # phonetic count); relaxed: only the phonetic count must be in range.
+                cluster_n, typo_n, phonetic_typo_n, missed_n = counts
                 in_range = options["min_typos"] <= phonetic_typo_n <= options["max_typos"]
-                if in_range and (options["allow_missed"] or typo_n == phonetic_typo_n):
+                if not in_range:
+                    continue
+                if options["lev_misses"]:
+                    # False-negative demo: the final search must drop >= N real rows.
+                    if missed_n >= options["lev_misses"]:
+                        survivors.append((first_name, last_name, canonical_n, person_id, cluster_n))
+                # Strict mode: every typo row must be phonetic (then typo_n IS the
+                # phonetic count); --allow-missed: only the phonetic count matters.
+                elif options["allow_missed"] or typo_n == phonetic_typo_n:
                     survivors.append((first_name, last_name, canonical_n, person_id, cluster_n))
         return survivors
 
@@ -356,7 +401,12 @@ class Command(BaseCommand):
                 return None
             phonetic_n, phon_lev_n, fp_n, fn_n = row[1], row[2], row[3], row[4]
             false_positives_bare = phonetic_n - cluster_n  # bare-phonetic noise beyond the person
-            if fp_n != 0 or (fn_n != 0 and not options["allow_missed"]):
+            if fp_n != 0:
+                return None
+            if options["lev_misses"]:
+                if fn_n < options["lev_misses"]:
+                    return None
+            elif not options["allow_missed"] and fn_n != 0:
                 return None
             if false_positives_bare < options["min_false_positives"]:
                 return None
@@ -402,7 +452,7 @@ class Command(BaseCommand):
     # Output
     # ------------------------------------------------------------------
 
-    def _print_matches(self, matches: list[dict], allow_missed: bool) -> None:
+    def _print_matches(self, matches: list[dict], options) -> None:
         bar = "=" * 78
         self.stdout.write(bar)
         self.stdout.write(f"FUZZY-SEARCH DEMO NAMES ({len(matches)} matches)")
@@ -420,17 +470,35 @@ class Command(BaseCommand):
             exact = (
                 "EXACTLY the cluster"
                 if m["false_negative_n"] == 0
-                else f"the cluster minus {m['false_negative_n']} unphonetic typo row(s)"
+                else f"the cluster minus {m['false_negative_n']} missed typo row(s)"
             )
             self.stdout.write(f"    phonetic + lev: {m['phon_lev_n']} rows  = {exact}")
+            if m["false_negative_n"]:
+                breakdown: dict[str, int] = {}
+                for _f, _l, rows, _dob, sx, dm, fn_dist, ln_dist in m["details"]:
+                    dist_gt2 = fn_dist > 2 or ln_dist > 2
+                    codes_ok = sx or dm
+                    if not (dist_gt2 or not codes_ok):
+                        continue
+                    if dist_gt2 and codes_ok:
+                        cause = "levenshtein: edit distance > 2"
+                    elif dist_gt2:
+                        cause = "levenshtein + broken codes"
+                    else:
+                        cause = "broken phonetic codes (distance within 2)"
+                    breakdown[cause] = breakdown.get(cause, 0) + rows
+                parts = ", ".join(f"{k}: {v}" for k, v in sorted(breakdown.items()))
+                self.stdout.write(f"    missed rows:    {m['false_negative_n']} total  ({parts})")
             self.stdout.write("    variants:")
             for first, last, rows, dob, sx, dm, fn_dist, ln_dist in m["details"]:
                 marker = "" if (first, last) == (m["first_name"], m["last_name"]) else "  (typo)"
                 codes = (
                     " + ".join(filter(None, ["soundex" if sx else None, "daitch-mokotoff" if dm else None])) or "none"
                 )
+                missed = (not sx and not dm) or fn_dist > 2 or ln_dist > 2
+                suffix = "  MISSED" if missed else ""
                 self.stdout.write(
-                    f"      {first} {last}{marker}  x{rows}  [phonetic: {codes}, lev: {fn_dist}/{ln_dist}]"
+                    f"      {first} {last}{marker}  x{rows}  [phonetic: {codes}, lev: {fn_dist}/{ln_dist}]{suffix}"
                 )
 
     def _print_sql(self, matches: list[dict]) -> None:
