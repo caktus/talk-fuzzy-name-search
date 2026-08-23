@@ -1140,3 +1140,141 @@ class TestHXRequestPartialResponse:
         for marker in self.SHELL_MARKERS:
             assert marker not in html
         assert "Enter a name to search" in html
+
+
+class TestGuidedDemo:
+    """The How-it-works page's interactive "click step by step" demo.
+
+    Every step runs the real search_unified() path; the step endpoint diffs
+    the current result ids against ?prev_ids= (carried from the last rendered
+    fragment) to highlight added/removed rows.
+    """
+
+    STEP_ENDPOINT = "/search/guided-step/"
+
+    @pytest.fixture(autouse=True)
+    def _seed_client_and_noise(self, db):
+        # The guided demo person (JIM LLOYD, 1981-11-07): exact spelling + a
+        # Soundex/L300 typo, plus a same-named different person born earlier.
+        self.client1981 = CourtRecord.objects.create(
+            first_name="JIM", last_name="LLOYD", date_of_birth="1981-11-07"
+        )
+        self.client_loyd = CourtRecord.objects.create(
+            first_name="JIM", last_name="LOYD", date_of_birth="1981-11-07"
+        )
+        self.other_jim = CourtRecord.objects.create(
+            first_name="JIM", last_name="LLOYD", date_of_birth="1965-01-01"
+        )
+
+    def test_help_page_renders_single_guided_demo_with_picker(self, client):
+        """One guided-demo section with a client picker (both curated cases listed)."""
+        response = client.get("/help/")
+        assert response.status_code == 200
+        html = response.content.decode()
+        # A single shared walkthrough container (no per-case container anymore).
+        assert 'id="guided-demo-step"' in html
+        assert 'id="guided-demo-step-lloyd"' not in html
+        assert html.count("Guided demo: finding your client in the noise") == 1
+        # Both curated clients appear as picker options; discovery adds none in tests.
+        cases = response.context["guided_cases"]
+        assert [c["person"]["last_name"] for c in cases] == ["LLOYD", "VAUGHN"]
+        assert all(c["verified"] for c in cases)
+        # The first client (LLOYD) is active by default and its chip is highlighted.
+        assert response.context["guided_active_key"] == "lloyd"
+        assert "guided_case=vaughn" in html
+        assert "JIM" in html and "LLOYD" in html and "1981-11-07" in html
+
+    def test_help_page_selects_a_different_guided_case(self, client):
+        """?guided_case= switches which client the walkthrough intro shows."""
+        response = client.get("/help/", {"guided_case": "vaughn"})
+        assert response.status_code == 200
+        assert response.context["guided_active_key"] == "vaughn"
+        assert response.context["guided_active"]["person"]["date_of_birth"] == "1973-07-19"
+        assert "VAUGHN" in response.content.decode()
+
+    def test_step_endpoint_defaults_to_first_case(self, client):
+        """Omitting ?case= plays back scenario 1 (LLOYD), not scenario 2."""
+        response = client.get(self.STEP_ENDPOINT, {"step": "6"})
+        assert response.context["case_key"] == "lloyd"
+        assert any(
+            r["person"].first_name.upper() == "JIM" for r in response.context["results"]
+        )
+
+    def test_vaughn_case_runs_its_own_steps(self, client):
+        """?case=vaughn runs the WILL VAUGHN scenario (DOB 1973-07-19)."""
+        response = client.get(self.STEP_ENDPOINT, {"case": "vaughn", "step": "0"})
+        assert response.status_code == 200
+        assert response.context["case_key"] == "vaughn"
+        assert response.context["person"]["date_of_birth"] == "1973-07-19"
+        assert len(response.context["steps"]) == 7
+
+    def test_unknown_case_clamps_to_first(self, client):
+        response = client.get(self.STEP_ENDPOINT, {"case": "bogus", "step": "1"})
+        assert response.status_code == 200
+        assert response.context["case_key"] == "lloyd"
+
+    def test_step_zero_is_intro_with_no_search(self, client):
+        response = client.get(self.STEP_ENDPOINT, {"step": "0"})
+        assert response.status_code == 200
+        assert response.context["step"] == 0
+        assert response.context["results"] == []
+        html = response.content.decode()
+        assert "Nothing searched yet" in html
+        assert "Step 1 of 7" in html
+
+    def test_dob_step_drops_unrelated_same_name(self, client):
+        """Step 2 (legacy LIKE + DOB) keeps the client and drops the 1965 Jim Lloyd."""
+        first = client.get(self.STEP_ENDPOINT, {"step": "1"})
+        prev_ids = first.context["current_ids_csv"]
+        assert {str(self.client1981.id), str(self.other_jim.id)} == set(
+            prev_ids.split(",")
+        )
+        second = client.get(self.STEP_ENDPOINT, {"step": "2", "prev_ids": prev_ids})
+        assert second.status_code == 200
+        assert [r["person"] for r in second.context["results"]] == [self.client1981]
+        assert str(self.other_jim.id) in second.context["removed_ids"]
+        assert [r.id for r in second.context["removed_records"]] == [self.other_jim.id]
+        html = second.content.decode()
+        assert "−1 dropped" in html
+        assert "Dropped this step" in html
+        assert str(self.other_jim.id) in html
+
+    def test_dob_step_adds_when_search_widens(self, client):
+        """Walking backward (step 2 -> step 1) shows rows as added, not removed.
+
+        The client (1981) is in both lists, so only the 1965 Jim Lloyd is new.
+        """
+        narrow = client.get(self.STEP_ENDPOINT, {"step": "2"})
+        wide = client.get(self.STEP_ENDPOINT, {"step": "1", "prev_ids": narrow.context["current_ids_csv"]})
+        assert wide.context["added_ids"] == {str(self.other_jim.id)}
+        assert wide.context["removed_ids"] == set()
+        assert "+1 added" in wide.content.decode()
+
+    def test_prefix_step_ignores_typo_spelling(self, client):
+        """Step 3 (exact prefix only) finds the client but not the LOYD typo row."""
+        response = client.get(self.STEP_ENDPOINT, {"step": "3"})
+        assert [r["person"] for r in response.context["results"]] == [self.client1981]
+        assert response.context["results"][0]["is_canonical"] is True
+
+    def test_trigram_step_matches_client_from_mistyped_loyd(self, client):
+        """Step 6 queries LOYD (a misspelling of LLOYD) and still surfaces the client."""
+        response = client.get(self.STEP_ENDPOINT, {"step": "6"})
+        matched = {r["person"] for r in response.context["results"]}
+        assert self.client1981 in matched  # LLOYD ~ LOYD clears the 0.3 similarity cut
+        assert self.client_loyd in matched
+
+    def test_next_prev_navigation_urls_in_fragment(self, client):
+        response = client.get(self.STEP_ENDPOINT, {"step": "1"})
+        html = response.content.decode()
+        assert ("step=2" in html) and ("step=0" in html)
+        assert "Next step" in html
+        assert "Start over" in html
+        # The nav buttons carry the current row ids so the next render can diff.
+        assert "prev_ids" in html
+        assert f"{self.client1981.id},{self.other_jim.id}" in html
+
+    def test_out_of_range_steps_clamp_to_zero(self, client):
+        for bad in ("99", "-1", "abc"):
+            response = client.get(self.STEP_ENDPOINT, {"step": bad})
+            assert response.status_code == 200
+            assert response.context["step"] == 0

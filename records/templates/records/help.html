@@ -92,6 +92,54 @@
                         {% endfor %}
                     </div>
                 </div>
+
+                {# ==================== Guided demo ==================== #}
+                <section class="mt-10" aria-labelledby="guided-demo-heading">
+                    <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+                        <div class="px-6 py-4 border-b border-gray-200 bg-gray-50/60">
+                            <div class="flex items-center gap-2">
+                                <span class="inline-flex items-center rounded-full bg-primary-50 px-2 py-1 text-xs font-medium text-primary-700 ring-1 ring-inset ring-primary-600/20">Interactive</span>
+                                <h2 id="guided-demo-heading" class="text-base font-semibold text-gray-900">Guided demo: finding your client in the noise</h2>
+                            </div>
+                            <p class="mt-2 text-sm text-gray-600">
+                                Pick a client, then click through a real-world attorney scenario. Every step re-runs the
+                                <span class="font-mono text-xs">search_unified()</span> code path in real time —
+                                rows that <span class="text-green-700 font-medium">enter</span> the results are
+                                marked <span class="inline-flex items-center rounded-full bg-green-500 px-1.5 py-0.5 text-[10px] font-semibold text-white">NEW</span>,
+                                and rows that <span class="text-red-700 font-medium">leave</span> are listed under
+                                <span class="font-medium">Dropped this step</span>.
+                            </p>
+                            {# Client picker — one chip per scenario; the first two are rehersed, the rest are discovered live #}
+                            <div class="mt-3 flex flex-wrap gap-1.5">
+                                {% for gcase in guided_cases %}
+                                    <a href="{% url 'records:help' %}?guided_case={{ gcase.key }}"
+                                       class="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium ring-1 ring-inset transition-colors
+                                              {% if gcase.key == guided_active_key %}bg-primary-600 text-white ring-primary-600{% else %}bg-white text-gray-700 ring-gray-300 hover:bg-gray-100{% endif %}"
+                                       title="{{ gcase.blurb }}">
+                                        {{ gcase.person.first_name }} {{ gcase.person.last_name }}
+                                        {% if gcase.verified %}
+                                            <span class="{% if gcase.key == guided_active_key %}text-primary-100{% else %}text-gray-400{% endif %}">★</span>
+                                        {% endif %}
+                                    </a>
+                                {% endfor %}
+                            </div>
+                            <p class="mt-2 text-xs text-gray-500">
+                                The client: <span class="font-semibold text-gray-900">{{ guided_active.person.first_name }} {{ guided_active.person.last_name }}</span>,
+                                born <span class="font-semibold text-gray-900">{{ guided_active.person.date_of_birth }}</span> —
+                                {{ guided_active.blurb }}
+                            </p>
+                        </div>
+                        <div class="p-6">
+                            <div id="guided-demo-step"
+                                 hx-get="{% url 'records:guided_demo_step' %}?case={{ guided_active.key }}&step=0"
+                                 hx-trigger="load"
+                                 hx-target="#guided-demo-step"
+                                 hx-swap="innerHTML">
+                                <div class="py-8 text-center text-sm text-gray-500">Loading the guided demo…</div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
             </main>
         </div>
     </body>
