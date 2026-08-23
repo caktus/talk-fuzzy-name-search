@@ -108,6 +108,7 @@
           [Unit]
           Description=Setup Loopback Alias IP ({{ database_host_ip }})
           After=network.target
+          Before=postgresql@{{ postgresql_version }}-main.service
 
           [Service]
           Type=oneshot
@@ -124,12 +125,34 @@
         daemon_reload: yes
         enabled: yes
         state: started
+
+    # Ensure PostgreSQL always starts after the loopback alias exists, even
+    # on reboots where systemd would otherwise start both units in parallel.
+    - name: Create systemd drop-in directory for PostgreSQL
+      ansible.builtin.file:
+        path: /etc/systemd/system/postgresql@{{ postgresql_version }}-main.service.d
+        state: directory
+        mode: "0755"
+
+    - name: Create systemd drop-in to order PostgreSQL after the loopback alias
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/postgresql@{{ postgresql_version }}-main.service.d/lo-alias.conf
+        mode: "0644"
+        content: |
+          [Unit]
+          After=lo-alias.service
+          Requires=lo-alias.service
+      notify: Reload systemd
   roles:
     - role: geerlingguy.postgresql
   handlers:
     - name: Update apt cache
       ansible.builtin.apt:
         update_cache: yes
+
+    - name: Reload systemd
+      ansible.builtin.systemd_service:
+        daemon_reload: yes
 
 - name: Podman and the app user
   hosts: app
@@ -251,15 +274,19 @@
         creates: "{{ github_key_dir }}/github_deploy"
       register: github_key_generated
 
-    - name: Set permissions on deploy key files
+    - name: Set permissions on private deploy key
       ansible.builtin.file:
-        path: "{{ item }}"
+        path: "{{ github_key_dir }}/github_deploy"
+        owner: root
+        group: root
+        mode: "0600"
+
+    - name: Set permissions on public deploy key
+      ansible.builtin.file:
+        path: "{{ github_key_dir }}/github_deploy.pub"
         owner: root
         group: deploy
         mode: "0640"
-      loop:
-        - "{{ github_key_dir }}/github_deploy"
-        - "{{ github_key_dir }}/github_deploy.pub"
 
     - name: Read public key
       ansible.builtin.slurp:

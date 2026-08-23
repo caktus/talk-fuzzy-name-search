@@ -42,6 +42,11 @@ ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["*"])
 # Required for the admin login (and any session use) to work over HTTPS.
 CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
 
+# Only mark cookies Secure when running over HTTPS in production; local HTTP
+# development (DEBUG=True) still needs to send cookies without it.
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
+
 
 # Application definition
 

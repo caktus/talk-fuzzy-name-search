@@ -19,6 +19,11 @@ Roles and collections are declared in `requirements.yaml` and installed into
 
 - A fresh **Ubuntu 24.04** droplet (the tuning in `postgres.yaml` assumes
   ~4 vCPU / 16 GB).
+- Enroll the droplet's SSH host key before the first connection (Ansible
+  verifies it against `known_hosts`):
+  ```bash
+  ssh-keyscan -H <droplet-ip> >> ~/.ssh/known_hosts
+  ```
 - This checkout of the repo, with the dev group installed (the default
   `uv sync` from the repo root includes ansible):
   ```bash
@@ -142,7 +147,7 @@ sudo -u django_user XDG_RUNTIME_DIR=/run/user/$(id -u django_user)/tmp \
 | What                                     | Where                                                                                    | Notes                                                                                                                               |
 | ---------------------------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `DJANGO_SECRET_KEY`, `DATABASE_PASSWORD` | `deploy_env_file` (default `/etc/talk-fuzzy-name-search/deploy.env`, `root:deploy` 0640) | Regenerate: delete the file, re-run `-t secrets`, then `-t postgres_objects -t app`                                                 |
-| GitHub deploy keypair                    | `/etc/talk-fuzzy-name-search/github_deploy[.pub]` (`root:deploy`)                        | public key added to the repo as a read-only deploy key; private key installed to `~/.ssh/id_github_deploy` for the app user         |
+| GitHub deploy keypair                    | `/etc/talk-fuzzy-name-search/github_deploy` (`root:root` 0600), `github_deploy.pub` (`root:deploy` 0640) | public key added to the repo as a read-only deploy key; private key installed to `~/.ssh/id_github_deploy` for the app user         |
 | Container env                            | `/home/django_user/env/gunicorn.env` (app user, 0600)                                    | written by the podman role from `podman_env_vars`; the container is labeled with an env checksum so changed env triggers a recreate |
 
 ## Operational checks (read-only)

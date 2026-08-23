@@ -13,9 +13,12 @@ podman_default_network: app
 podman_networks:
   - name: "{{ podman_default_network }}"
 
-# Workaround supporting Podman 4.9.x logging; auto-start on boot:
+# Workaround supporting Podman 4.9.x logging; auto-start on boot; restart on
+# failure (e.g. migrations failing on a transient DB/alias issue, or gunicorn
+# crashing):
 podman_quadlet_options:
   - PodmanArgs=--log-driver=k8s-file --log-opt path={{ podman_user_home }}/log/{{ item.name }}.log
+  - "\n[Service]\nRestart=on-failure\nRestartSec=5"
   - "\n[Install]\nWantedBy=default.target"
 
 ### Image build (no registry: build from git on the droplet) ###
@@ -36,7 +39,7 @@ podman_env_vars:
   DEBUG: "False"
   DJANGO_SECRET_KEY: "{{ deploy_env['DJANGO_SECRET_KEY'] }}"
   DJANGO_ALLOWED_HOSTS: "{{ env_allowed_hosts | join(',') }}"
-  CSRF_TRUSTED_ORIGINS: "https://{{ env_allowed_hosts | first }}"
+  CSRF_TRUSTED_ORIGINS: "{{ env_allowed_hosts | map('regex_replace', '^', 'https://') | join(',') }}"
   # Reach the host's PostgreSQL through the dedicated loopback alias IP.
   DATABASE_URL: "postgres://{{ database_user }}:{{ deploy_env['DATABASE_PASSWORD'] }}@{{ database_host_ip }}/{{ database_name }}"
 
