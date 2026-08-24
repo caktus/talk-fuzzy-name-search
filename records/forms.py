@@ -14,7 +14,8 @@ from django.utils.dateparse import parse_date
 
 from .models import TRIGRAM_SIMILARITY_CUTOFF
 
-# Search modes, each independently toggleable via checkboxes.
+# Search modes. ``prefix`` and ``legacy`` are the base match modes (mutually
+# exclusive radio buttons in the UI); the rest are independent checkboxes.
 SEARCH_MODES = {
     "prefix": {
         "label": "Exact prefix",
@@ -42,7 +43,7 @@ SEARCH_MODES = {
         "default": False,
     },
     "legacy": {
-        "label": "Legacy LIKE",
+        "label": "LIKE (unindexed)",
         "description": "Unindexed LIKE '%name%' — slow, included for comparison.",
         "default": False,
     },
