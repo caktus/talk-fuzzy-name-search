@@ -62,8 +62,9 @@
                                 <span class="text-xs font-semibold text-green-700 uppercase tracking-wide mt-0.5 shrink-0 w-16">Exact</span>
                                 <div class="flex flex-wrap gap-x-4 gap-y-1">
                                     <label class="inline-flex items-center gap-1.5 text-sm cursor-pointer group">
-                                        <input type="checkbox"
-                                               class="mode-checkbox rounded border-gray-300 text-green-600 shadow-sm focus:ring-green-600"
+                                        <input type="radio"
+                                               name="base_mode"
+                                               class="mode-radio rounded-full border-gray-300 text-green-600 shadow-sm focus:ring-green-600"
                                                value="prefix"
                                                {% if "prefix" in enabled_modes %}checked{% endif %}>
                                         <span class="text-gray-700 group-hover:text-gray-900">{{ modes.prefix.label }}</span>
@@ -73,10 +74,11 @@
                                         {% endif %}
                                     </label>
                                     <label class="inline-flex items-center gap-1.5 text-sm cursor-pointer group">
-                                        <input type="checkbox"
-                                               class="mode-checkbox rounded border-gray-300 text-green-600 shadow-sm focus:ring-green-600"
+                                        <input type="radio"
+                                               name="base_mode"
+                                               class="mode-radio rounded-full border-gray-300 text-green-600 shadow-sm focus:ring-green-600"
                                                value="legacy"
-                                               {% if "legacy" in enabled_modes %}checked{% endif %}>
+                                               {% if "legacy" in enabled_modes and "prefix" not in enabled_modes %}checked{% endif %}>
                                         <span class="text-gray-700 group-hover:text-gray-900">{{ modes.legacy.label }}</span>
                                         {% if mode_sql.legacy %}
                                             <span class="text-gray-400 cursor-help text-xs"
@@ -202,15 +204,17 @@
         </div>
         <script>
         function updateModes() {
-            var checkboxes = document.querySelectorAll('.mode-checkbox');
             var enabled = [];
-            checkboxes.forEach(function(cb) {
+            document.querySelectorAll('.mode-radio:checked').forEach(function(radio) {
+                enabled.push(radio.value);
+            });
+            document.querySelectorAll('.mode-checkbox').forEach(function(cb) {
                 if (cb.checked && !cb.disabled) enabled.push(cb.value);
             });
             document.getElementById('modes').value = enabled.join(',');
         }
         document.addEventListener("change", function (e) {
-            if (e.target.classList.contains('mode-checkbox')) {
+            if (e.target.classList.contains('mode-checkbox') || e.target.classList.contains('mode-radio')) {
                 updateModes();
                 htmx.trigger("#search-form", "run-search");
             }

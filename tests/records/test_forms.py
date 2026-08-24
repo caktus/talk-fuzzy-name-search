@@ -170,7 +170,7 @@ class TestSearchViewParamParsing:
         response = client.get("/search/explain/?modes=&mode=legacy&first_name=John")
         assert response.status_code == 200
         assert response.context["mode"] == "legacy"
-        assert response.context["mode_label"] == "Legacy LIKE"
+        assert response.context["mode_label"] == "LIKE (unindexed)"
         assert "LIKE" in response.context["sql"]
 
     def test_multi_value_param_last_wins(self, client):

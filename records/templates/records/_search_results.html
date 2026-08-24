@@ -59,7 +59,7 @@
                             <th class="px-4 py-3 whitespace-nowrap">
                                 {% if "legacy" in enabled_modes %}
                                     <span class="inline-flex items-center gap-1 text-gray-400 cursor-not-allowed"
-                                          title="Sort disabled: Legacy LIKE has no index, so sorting by DOB can force a slow full scan.">
+                                          title="Sort disabled: LIKE (unindexed) has no index, so sorting by DOB can force a slow full scan.">
                                         Date of Birth
                                     </span>
                                 {% else %}

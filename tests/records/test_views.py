@@ -898,7 +898,7 @@ class TestSearchExplain:
         assert "SOUNDEX" not in sql
         assert response.context["plan"]
         assert response.context["mode"] == "legacy,levenshtein"
-        assert response.context["mode_label"] == "Legacy LIKE + Levenshtein"
+        assert response.context["mode_label"] == "LIKE (unindexed) + Levenshtein"
         assert response.context["explain_subject"] == "Explaining: legacy + levenshtein"
 
     def test_explain_trigram_mode_explains_knn_query(self, client):
@@ -992,41 +992,75 @@ class TestSearchExplain:
         assert "first_name=J%26J" in html
 
 
-class TestModeCheckboxCheckedState:
-    """P1-11: the rendered checkboxes' `checked` attribute reflects ?modes=... ."""
+class TestModeControlCheckedState:
+    """The rendered mode controls' `checked` attribute reflects ?modes=... .
+
+    prefix and legacy are radio buttons (mutually exclusive); the other modes
+    are checkboxes.
+    """
 
     @staticmethod
-    def _checkbox_html(html, mode):
+    def _control_html(html, mode):
         match = re.search(rf'<input[^>]*value="{re.escape(mode)}"[^>]*>', html)
-        assert match, f"checkbox for {mode!r} not found in rendered HTML"
+        assert match, f"mode control for {mode!r} not found in rendered HTML"
         return match.group(0)
 
-    def test_requested_modes_are_checked_others_are_not(self, client):
-        """?modes=prefix,soundex -> exactly those checkboxes carry `checked`."""
-        response = client.get("/?modes=prefix,soundex&first_name=John&last_name=Smith")
-        assert response.status_code == 200
-        html = response.content.decode()
-        assert "checked" in self._checkbox_html(html, "prefix")
-        assert "checked" in self._checkbox_html(html, "soundex")
-        for mode in ("legacy", "dm", "levenshtein", "trigram"):
-            assert "checked" not in self._checkbox_html(html, mode)
-
-    def test_all_modes_requested_all_checked(self, client):
-        """With every mode checked (and a base mode present), all six are checked."""
-        response = client.get("/?modes=prefix,legacy,soundex,dm,levenshtein,trigram&first_name=John")
-        assert response.status_code == 200
-        html = response.content.decode()
-        for mode in ("prefix", "legacy", "soundex", "dm", "levenshtein", "trigram"):
-            assert "checked" in self._checkbox_html(html, mode)
-
-    def test_default_only_prefix_checked(self, client):
-        """No ?modes -> the default (prefix only) is checked, the rest are not."""
+    def test_prefix_and_legacy_render_as_radios(self, client):
+        """prefix and legacy are radio inputs sharing the base_mode group."""
         response = client.get("/")
         assert response.status_code == 200
         html = response.content.decode()
-        assert "checked" in self._checkbox_html(html, "prefix")
+        for mode in ("prefix", "legacy"):
+            control = self._control_html(html, mode)
+            assert 'type="radio"' in control
+            assert 'name="base_mode"' in control
+
+    def test_requested_modes_are_checked_others_are_not(self, client):
+        """?modes=prefix,soundex -> exactly those controls carry `checked`."""
+        response = client.get("/?modes=prefix,soundex&first_name=John&last_name=Smith")
+        assert response.status_code == 200
+        html = response.content.decode()
+        assert "checked" in self._control_html(html, "prefix")
+        assert "checked" in self._control_html(html, "soundex")
+        for mode in ("legacy", "dm", "levenshtein", "trigram"):
+            assert "checked" not in self._control_html(html, mode)
+
+    def test_legacy_radio_checked_when_prefix_absent(self, client):
+        """?modes=legacy,soundex -> the legacy radio (not prefix) is checked."""
+        response = client.get("/?modes=legacy,soundex&first_name=John")
+        assert response.status_code == 200
+        html = response.content.decode()
+        assert "checked" in self._control_html(html, "legacy")
+        assert "checked" not in self._control_html(html, "prefix")
+        assert "checked" in self._control_html(html, "soundex")
+
+    def test_both_base_modes_requested_prefix_radio_wins(self, client):
+        """Old URLs can request both base modes; radios highlight prefix only."""
+        response = client.get("/?modes=legacy,prefix,soundex&first_name=John")
+        assert response.status_code == 200
+        html = response.content.decode()
+        assert "checked" in self._control_html(html, "prefix")
+        assert "checked" not in self._control_html(html, "legacy")
+        assert "checked" in self._control_html(html, "soundex")
+
+    def test_all_modes_requested_all_checked(self, client):
+        """With every mode requested, all checkboxes are checked and the
+        prefix radio (not the legacy radio) is checked."""
+        response = client.get("/?modes=prefix,legacy,soundex,dm,levenshtein,trigram&first_name=John")
+        assert response.status_code == 200
+        html = response.content.decode()
+        for mode in ("prefix", "soundex", "dm", "levenshtein", "trigram"):
+            assert "checked" in self._control_html(html, mode)
+        assert "checked" not in self._control_html(html, "legacy")
+
+    def test_default_only_prefix_checked(self, client):
+        """No ?modes -> the default (prefix radio) is checked, the rest are not."""
+        response = client.get("/")
+        assert response.status_code == 200
+        html = response.content.decode()
+        assert "checked" in self._control_html(html, "prefix")
         for mode in ("legacy", "soundex", "dm", "levenshtein", "trigram"):
-            assert "checked" not in self._checkbox_html(html, mode)
+            assert "checked" not in self._control_html(html, mode)
 
 
 class TestModeSqlTooltips:
