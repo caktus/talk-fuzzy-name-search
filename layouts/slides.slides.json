@@ -53,7 +53,7 @@
       },
       {
         "type": "slide",
-        "speakerNotes": "To help understand the scope of the problem and some of the assumptions we as programmers and technologists might make about names, we highly recommend the article linked here, \"Falsehoods Programmers Believe About Names,\" by Patrick McKenzie in 2010.\n\nSome of them are pretty funny, and I recommend reading through them all on your own time.\n"
+        "speakerNotes": "To help understand the scope of the problem and some of the assumptions we as programmers and technologists might make about names, we highly recommend the article linked here, \"Falsehoods Programmers Believe About Names,\" by Patrick McKenzie in 2010.\n\nIt's linked here if you'd like to read it.\n"
       },
       {
         "type": "slide",
@@ -84,7 +84,9 @@
       {
         "speakerNotes": "The data dump we receive from the stateis NOT a clean, unified \"Person\" table. It is a list of\nraw court records. Every time a person's name gets entered into the\ncourts \u2014 different county, different clerk, different year \u2014 a new row is\ncreated. So the same real person shows up across many duplicated records,\noften with typos, nicknames, and aliases.\n\nThis is loosely what the data model looks, with a first name, last name, middle name, and date of birth field.\n\nWe added the person_id field for demonstration purposes to help us see if we tracked down all the records corresponding to that person or not.\n\nThat duplication is exactly why the search is hard: \"Amanda Morgan\" is\nnot one row we look up; it is a cluster of rows we have to find and\nde-duplicate."
       },
-      {},
+      {
+        "type": "skip"
+      },
       {
         "showCode": true
       },
@@ -120,14 +122,16 @@
         "showCode": true
       },
       {},
+      {},
+      {
+        "speakerNotes": "For example"
+      },
+      {},
       {
         "showCode": true
       },
       {},
       {},
-      {
-        "speakerNotes": "For example"
-      },
       {},
       {
         "type": "skip"

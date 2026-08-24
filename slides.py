@@ -45,8 +45,16 @@ def _():
 
     Caktus Group // DjangoCon US 2026
     """),
-        mo.hstack([mo.md("### https://cakt.us/fuzzy-repo"),
-                   mo.image((visuals / "qr_repo.png").absolute(), width="25%")])
+        mo.hstack(
+            [
+                mo.vstack(
+                    [
+                        mo.md("### https://cakt.us/fuzzy-repo"),
+                        mo.image((visuals / "caktus-logo-notag.png").absolute(), width="25%"),
+                    ]
+                ),
+                mo.image((visuals / "qr_repo.png").absolute(), width="25%")
+            ])
         ])
     return
 
@@ -58,16 +66,16 @@ def _():
     """
     mo.vstack(
         [
-            mo.md("# Speakers"),
+            mo.md("## Speakers"),
             mo.hstack(
                 [
                     mo.md("""
-            ## Tobias McNulty
-            ### Chief Executive Officer + Co-founder
+            ### Tobias McNulty
+            #### Chief Executive Officer + Co-founder
             """),
                     mo.md("""
-            ## Gerald Carlton
-            ### Scrum Master & Quality Assurance Analyst
+            ### Gerald Carlton
+            #### Scrum Master & Quality Assurance Analyst
             """),
                 ],
                 widths="equal",
@@ -85,16 +93,16 @@ def _():
     """
     mo.vstack(
         [
-            mo.md("# Contributors"),
+            mo.md("## Contributors"),
             mo.hstack(
                 [
                     mo.md("""
-            ## Colin Copeland
-            ### Chief Technical Officer + Co-founder
+            ### Colin Copeland
+            #### Chief Technical Officer + Co-founder
             """),
                     mo.md("""
-            ## Simon Kagwi
-            ### Developer
+            ### Simon Kagwi
+            #### Developer
             """),
                 ],
                 widths="equal",
@@ -136,9 +144,9 @@ def _():
 
     # Overrides the deck's top-aligned layout to render this as a centered title slide.
     mo.md("""
-        # Criminal record expungement
+        ## Criminal record expungement
 
-        ### The process by which a criminal case is permanently removed from state record
+        ### The process by which a criminal case is permanently removed from state record.
         """)
     return (flowchart,)
 
@@ -154,7 +162,7 @@ def _(flowchart):
     mo.vstack(
         [
             mo.md("""
-        ### 1. Client intake and data collection
+        ## 1. Client intake and data collection
         """),
             mo.mermaid(flowchart("A")),
             mo.md("""
@@ -177,7 +185,7 @@ def _(flowchart):
     mo.vstack(
         [
             mo.md("""
-        ### 2. Record search
+        ## 2. Record search
         """),
             mo.mermaid(flowchart("B")),
             mo.md("""
@@ -200,7 +208,7 @@ def _(flowchart):
     mo.vstack(
         [
             mo.md("""
-        ### 3. Statute and eligibility rules
+        ## 3. Statute and eligibility rules
         """),
             mo.mermaid(flowchart("C")),
             mo.md("""
@@ -222,7 +230,7 @@ def _(flowchart):
     mo.vstack(
         [
             mo.md("""
-        ### 4. Form generation
+        ## 4. Form generation
         """),
             mo.mermaid(flowchart("D")),
             mo.md("""
@@ -244,7 +252,7 @@ def _(flowchart):
     mo.vstack(
         [
             mo.md("""
-        ### 5. Expungement petition filed
+        ## 5. Expungement petition filed
         """),
             mo.mermaid(flowchart("E")),
             mo.md("""
@@ -287,7 +295,7 @@ def _():
     mo.vstack(
         [
             mo.md("""
-        ### What we learned at the workshop
+        ## What we learned at the workshop
         """),
             mo.image((visuals / "workshop.jpg").absolute(), width="100%"),
         ]
@@ -342,9 +350,7 @@ def _():
     # mo.image((visuals / "portal-soundslike.png").absolute(), width="100%")
     mo.vstack(
         [
-            mo.md("""
-        # The portal's "sounds like" search
-        """),
+            mo.md("""## The portal's "sounds like" search"""),
             mo.image((visuals / "sounds_like.png").absolute(), width="100%")
         ]
     )
@@ -413,9 +419,7 @@ def _():
 
     In 2010, Patrick McKenzie published **[Falsehoods Programmers Believe About Names](https://www.kalzumeus.com/2010/06/17/falsehoods-programmers-believe-about-names/)** — 40 incorrect assumptions engineers routinely make when designing systems.
 
-    Modern legal databases — like the state's new court portal — were built on many of these exact falsehoods.
-
-    **Five of them directly break criminal record searches.**
+    ## https://cakt.us/name-falsehoods
     """)
     return
 
@@ -528,7 +532,7 @@ def _():
     mo.md(r"""
     ```python
     class CourtRecord(models.Model):
-        "A single raw court record (one capture of a person, not a unified person)."
+        "A single raw court record."
 
         first_name = models.CharField(max_length=50)
         last_name = models.CharField(max_length=50)
@@ -621,9 +625,9 @@ def _():
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    # Phonetic algorithms
+    ## Phonetic algorithms
 
-    ## Soundex and Daitch-Mokotoff
+    ### Soundex and Daitch-Mokotoff
     """)
     return
 
@@ -711,7 +715,7 @@ def _():
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    # Levenshtein distance and trigram matching
+    ## Levenshtein distance
     """)
     return
 
@@ -758,7 +762,7 @@ def _():
     precision filter uses levenshtein_less_equal.
     """
     mo.md(r"""
-    ### `levenshtein_less_equal()`
+    ## `levenshtein_less_equal()`
 
     For an efficient gain, use `levenshtein_less_equal()` instead of `levenshtein()`:
 
@@ -769,40 +773,6 @@ def _():
     -- bails out the moment the distance exceeds 2, returning a value > 2
     SELECT levenshtein_less_equal(last_name, 'SMYTH', 2);
     ```
-    """)
-    return
-
-
-@app.cell
-def _():
-    _df = mo.sql(
-        f"""
-        SELECT
-            similarity ('Geraldine', 'Gerardine') as geraldine,
-            similarity ('Morgan', 'Morrison') as morgan,
-        	similarity ('car', 'truck') as car,
-        	similarity ('postgres', 'postgres') as pg;
-
-        -- Compares every 3 letter slices of both words, e.g., 'ger', 'era', 'ral', etc.,
-        -- and calculates the ratio of shared trigrams to total unique trigrams.
-        -- Scores range from 0 to 1
-        -- Two words with the same soundex code might have very low trigram similarity
-        """,
-        engine=engine
-    )
-    return
-
-
-@app.cell(hide_code=True)
-def _():
-    mo.md(r"""
-    ### Trigram support in Django
-
-    `django.contrib.postgres.search` ships the trigram functions as built-in ORM
-    expressions:
-
-    - `TrigramSimilarity` -- wraps `similarity()`
-    - `TrigramDistance` -- wraps the `<->` KNN distance operator
     """)
     return
 
@@ -866,12 +836,67 @@ def _():
     return
 
 
+@app.cell
+def _():
+    mo.md(r"""
+    ### Honorable Mention:
+    ## Trigram matching
+    """)
+    return
+
+
+@app.cell
+def _():
+    _df = mo.sql(
+        f"""
+        SELECT
+            similarity ('Geraldine', 'Gerardine') as geraldine,
+            similarity ('Morgan', 'Morrison') as morgan,
+        	similarity ('car', 'truck') as car,
+        	similarity ('postgres', 'postgres') as pg;
+
+        -- Compares every 3 letter slices of both words, e.g., 'ger', 'era', 'ral', etc.,
+        -- and calculates the ratio of shared trigrams to total unique trigrams.
+        -- Scores range from 0 to 1
+        -- Two words with the same soundex code might have very low trigram similarity
+        """,
+        engine=engine
+    )
+    return
+
+
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    # Putting it together
+    ### Trigram support in Django
 
-    ## Using a phonetic algorithm with Levenshtein distance
+    `django.contrib.postgres.search` ships the trigram functions as built-in ORM
+    expressions:
+
+    - `TrigramSimilarity` -- wraps `similarity()`
+    - `TrigramDistance` -- wraps the `<->` KNN distance operator
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ## Why Trigrams didn't work for us
+
+    - Sensitive to short names ("Lee" vs. "Li", "Ray" vs. "Roy")
+    - GiST indexes are large and slow to generate (~15-20 minutes for 54M records)
+    - Supports `ORDER BY`, but on one column only
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _():
+    mo.md(r"""
+    ## Putting it together
+
+    ### Using a phonetic algorithm with Levenshtein distance
     """)
     return
 
@@ -925,7 +950,7 @@ def _(DaitchMokotoff, LevenshteinLessEqual, Upper, Value):
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    # Database Indexes
+    ## Database Indexes
     """)
     return
 
@@ -955,17 +980,19 @@ def _():
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
+    ## 2. Functional B-tree indexes for SOUNDEX equality comparisons *
     ```python
-    # Functional B-tree indexes for SOUNDEX equality comparisons
     models.Index(
-        models.Func(models.F("first_name"), function="SOUNDEX", template="SOUNDEX(UPPER(%(expressions)s))"),
+        models.Func(models.F("first_name"), function="SOUNDEX", template="SOUNDEX(%(expressions)s)"),
         name="idx_person_first_name_soundex",
     ),
     models.Index(
-        models.Func(models.F("last_name"), function="SOUNDEX", template="SOUNDEX(UPPER(%(expressions)s))"),
+        models.Func(models.F("last_name"), function="SOUNDEX", template="SOUNDEX(%(expressions)s)"),
         name="idx_person_last_name_soundex",
     ),
     ```
+
+    * Use the same approach for `daitch_mokotoff()`
     """)
     return
 
@@ -973,7 +1000,7 @@ def _():
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    # Live demo!
+    ## Live demo!
     """)
     return
 
@@ -983,10 +1010,9 @@ def _():
     mo.md(r"""
     ## Summary
 
-    - This is a hard problem!
     - `text_pattern_ops` index for fast `__istartswith` matching
     - `soundex()` and `daitch_mokotoff()` algorithms broaden the search
-    - `levenshtein_less_equal()` to narrow it again
+    - `levenshtein_less_equal()` to remove false positives
     - Create indexes that match your _exact_ function calls
     - Postgres is awesome!
     """)
@@ -996,11 +1022,17 @@ def _():
 @app.cell(hide_code=True)
 def _():
     mo.md(r"""
-    # Thank you for coming!
+    ## Thank you for coming!
 
     Links:
+    - Demo site: https://fuzzy-demo.caktus-built.com
     - Git repo: https://cakt.us/fuzzy-repo
     - Companion blog post: https://cakt.us/fuzzy-blog
+
+    Sources:
+    - https://www.crunchydata.com/blog/fuzzy-name-matching-in-postgresql
+    - https://www.kalzumeus.com/2010/06/17/falsehoods-programmers-believe-about-names/
+    - https://www.postgresql.org/docs/18/fuzzystrmatch.html
     """)
     return
 
