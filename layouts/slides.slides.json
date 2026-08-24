@@ -6,7 +6,7 @@
         "type": "skip"
       },
       {
-        "speakerNotes": "Welcome! We're really excited to be here today.",
+        "speakerNotes": "Welcome! We're really excited to be here today.\n\nThis is a semi-interactive talk; and these slides are also a Marimo notebook. If you'd like to try out the demo project or follow along in the notebook, scan this QR code or navigate to cakt.us/fuzzy-repo.",
         "showCode": false
       },
       {
