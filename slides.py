@@ -81,6 +81,15 @@ def _():
                 widths="equal",
                 gap=3,
             ),
+            mo.Html("<div style='height: 1.5rem'></div>"),
+            mo.hstack(
+                [
+                    mo.image((visuals / "tobias.jpg").absolute(), width="50%"),
+                    mo.image((visuals / "gerald.jpg").absolute(), width="50%"),
+                ],
+                widths="equal",
+                gap=3,
+            ),
         ]
     )
     return
@@ -97,13 +106,22 @@ def _():
             mo.hstack(
                 [
                     mo.md("""
-            ### Colin Copeland
-            #### Chief Technical Officer + Co-founder
-            """),
-                    mo.md("""
             ### Simon Kagwi
             #### Developer
             """),
+                    mo.md("""
+            ### Colin Copeland
+            #### Chief Technical Officer + Co-founder
+            """),
+                ],
+                widths="equal",
+                gap=3,
+            ),
+            mo.Html("<div style='height: 1.5rem'></div>"),
+            mo.hstack(
+                [
+                    mo.image((visuals / "simon.jpg").absolute(), width="50%"),
+                    mo.image((visuals / "colin.jpg").absolute(), width="50%"),
                 ],
                 widths="equal",
                 gap=3,
