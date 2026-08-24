@@ -1029,6 +1029,7 @@ def _():
     ## Summary
 
     - `text_pattern_ops` index for fast `__istartswith` matching
+    - Avoid sorting until the user requests it
     - `soundex()` and `daitch_mokotoff()` algorithms broaden the search
     - `levenshtein_less_equal()` to remove false positives
     - Create indexes that match your _exact_ function calls
